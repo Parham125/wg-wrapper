@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wg-wrapper</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="shell">
+	<header class="topbar">
+		<button class="picker" id="picker" type="button" aria-haspopup="dialog">
+			<span class="picker-name" id="profileName">No profile</span>
+			<svg class="caret" width="9" height="6" viewBox="0 0 9 6" aria-hidden="true"><path d="M1 1l3.5 3.5L8 1" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+		</button>
+		<button class="ghost" id="logToggle" type="button" aria-expanded="false" aria-controls="logPanel">Log</button>
+	</header>
+	<div class="statusline" id="statusline" data-state="disconnected"></div>
+	<main class="stage" id="stage">
+		<div class="state">
+			<h1 class="state-word" id="stateWord">Disconnected</h1>
+			<p class="state-sub" id="stateSub">Choose a profile to begin</p>
+		</div>
+		<div class="pulse">
+			<div class="track" id="track" role="img" aria-label="Traffic over the last minute"></div>
+			<p class="caption" id="caption"></p>
+		</div>
+		<dl class="readout">
+			<div class="row"><dt>Down</dt><dd id="rx">0 B</dd></div>
+			<div class="row"><dt>Up</dt><dd id="tx">0 B</dd></div>
+			<div class="row"><dt>Last handshake</dt><dd id="hs">none yet</dd></div>
+			<div class="row"><dt>Uptime</dt><dd id="uptime">0:00</dd></div>
+		</dl>
+		<div class="act">
+			<p class="notice" id="notice" role="status" hidden></p>
+			<button class="action" id="action" type="button">Connect</button>
+		</div>
+	</main>
+	<section class="drawer" id="logPanel" aria-label="Log" hidden>
+		<div class="drawer-head">
+			<h2>Log</h2>
+			<button class="ghost" id="logClose" type="button">Close</button>
+		</div>
+		<div class="drawer-body" id="logLines"><p class="blank">Nothing logged yet.</p></div>
+	</section>
+	<section class="sheet" id="sheet" role="dialog" aria-label="Profiles" hidden>
+		<div class="sheet-head">
+			<h2>Profiles</h2>
+			<button class="ghost" id="sheetClose" type="button">Close</button>
+		</div>
+		<div class="sheet-body">
+			<ul class="plist" id="plist"></ul>
+			<div class="blank-block" id="plistEmpty" hidden>
+				<p class="blank-title">No profiles yet</p>
+				<p class="blank-note">Paste a WireGuard config with an <code>Endpoint = wss://</code> line to add your first one.</p>
+			</div>
+		</div>
+		<div class="sheet-foot"><button class="action quiet" id="addOpen" type="button">Add profile</button></div>
+	</section>
+	<form class="sheet" id="addForm" aria-label="New profile" hidden>
+		<div class="sheet-head">
+			<h2>New profile</h2>
+			<button class="ghost" id="addCancel" type="button">Cancel</button>
+		</div>
+		<div class="sheet-body">
+			<label class="field"><span>Name</span><input id="addName" type="text" autocomplete="off" spellcheck="false" placeholder="Frankfurt relay"></label>
+			<label class="field grow"><span>WireGuard config</span><textarea id="addConf" spellcheck="false" placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = 10.7.0.2/32&#10;DNS = 1.1.1.1&#10;&#10;[Peer]&#10;PublicKey = ...&#10;Endpoint = wss://vpn.example.com/wg&#10;InsecureTls = true&#10;AllowedIPs = 0.0.0.0/0"></textarea></label>
+			<p class="notice" id="addError" hidden></p>
+		</div>
+		<div class="sheet-foot"><button class="action" type="submit">Save profile</button></div>
+	</form>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wg-wrapper (dev)</title>
+<link rel="stylesheet" href="../ui/app.css">
+</head>
+<body>
+<div id="mount"></div>
+<script src="mock.js"></script>
+<script>
+fetch("../ui/index.html").then(r=>r.text()).then(t=>{
+	document.getElementById("mount").outerHTML=new DOMParser().parseFromString(t, "text/html").querySelector(".shell").outerHTML;
+	const s=document.createElement("script");
+	s.src="../ui/app.js";
+	document.body.append(s);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+[package]
+name="wg-wrapper-client"
+version="0.1.0"
+edition="2021"
+license="MIT"
+repository="https://github.com/Parham125/wg-wrapper"
+description="Windows desktop client for wg-wrapper"
+
+# Standalone: the root workspace excludes this path so the Tauri crate keeps its own lockfile and profiles.
+[workspace]
+
+[build-dependencies]
+tauri-build="2"
+
+[dependencies]
+wgclient={path="../../wgclient"}
+tauri={version="2", features=[]}
+serde={version="1", features=["derive"]}
+serde_json="1"
+tokio={version="1", features=["sync", "time", "rt"]}
+tracing="0.1"
+tracing-subscriber={version="0.3", default-features=false, features=["registry", "std"]}
+
+[profile.release]
+opt-level="s"
+lto=true
+strip=true
