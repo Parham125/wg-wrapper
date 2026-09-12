@@ -1,0 +1,33 @@
+[workspace]
+resolver="2"
+members=["crates/wgcore", "crates/wsrelay", "crates/server", "crates/wgclient"]
+exclude=["crates/client-win/src-tauri"]
+
+[workspace.package]
+version="0.1.0"
+edition="2021"
+license="MIT"
+repository="https://github.com/Parham125/wg-wrapper"
+
+[workspace.dependencies]
+tokio={version="1", features=["full"]}
+anyhow="1"
+serde={version="1", features=["derive"]}
+serde_json="1"
+clap={version="4", features=["derive"]}
+tracing="0.1"
+tracing-subscriber={version="0.3", features=["env-filter"]}
+futures-util={version="0.3", default-features=false, features=["sink"]}
+tokio-tungstenite={version="0.30", features=["rustls-tls-webpki-roots"]}
+tokio-rustls={version="0.26", default-features=false, features=["ring", "tls12"]}
+rustls={version="0.23", default-features=false, features=["ring", "std", "tls12", "logging"]}
+rustls-pemfile="2"
+rcgen="0.14"
+boringtun={version="0.7", default-features=false}
+ipstack="1"
+tokio-socks="0.5"
+ipnet={version="2", features=["serde"]}
+base64="0.22"
+rand_core={version="0.6", features=["getrandom"]}
+etherparse="0.20"
+wintun-bindings="0.7"

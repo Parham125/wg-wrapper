@@ -1,0 +1,5 @@
+target/
+*.pem
+config.json
+crates/client-win/src-tauri/resources/wintun.dll
+crates/client-win/src-tauri/gen/

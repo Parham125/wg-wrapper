@@ -1,0 +1,90 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  windows-client:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/client-win/src-tauri
+          key: windows-client
+      - name: Fetch wintun
+        shell: pwsh
+        run: |
+          $ver = "0.14.1"
+          $sha = "07C256185D6EE3652E09FA55C0B673E2624B565E02C4B9091C79CA7D2F24EF51"
+          Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-$ver.zip" -OutFile wintun.zip
+          $got = (Get-FileHash wintun.zip -Algorithm SHA256).Hash
+          if ($got -ne $sha) { throw "wintun checksum mismatch: $got" }
+          Expand-Archive wintun.zip -DestinationPath wintun-unpacked -Force
+          New-Item -ItemType Directory -Force -Path crates/client-win/src-tauri/resources | Out-Null
+          Copy-Item wintun-unpacked/wintun/bin/amd64/wintun.dll crates/client-win/src-tauri/resources/wintun.dll
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: crates/client-win/src-tauri
+          tauriScript: npx --yes @tauri-apps/cli@^2
+          tagName: ${{ github.ref_name }}
+          releaseName: ${{ github.ref_name }}
+          uploadUpdaterJson: false
+
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-latest, target: x86_64-unknown-linux-musl, pkg: server, bin: wgw-server, cross: true}
+          - {os: ubuntu-latest, target: aarch64-unknown-linux-musl, pkg: server, bin: wgw-server, cross: true}
+          - {os: ubuntu-latest, target: x86_64-unknown-linux-musl, pkg: wsrelay, bin: wgw-bridge, cross: true}
+          - {os: windows-latest, target: x86_64-pc-windows-msvc, pkg: wsrelay, bin: wgw-bridge, cross: false}
+          - {os: macos-latest, target: aarch64-apple-darwin, pkg: wsrelay, bin: wgw-bridge, cross: false}
+          - {os: macos-latest, target: x86_64-apple-darwin, pkg: wsrelay, bin: wgw-bridge, cross: false}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}-${{ matrix.bin }}
+      - uses: taiki-e/install-action@v2
+        if: matrix.cross
+        with:
+          tool: cross
+      - name: Build
+        shell: bash
+        run: ${{ matrix.cross && 'cross' || 'cargo' }} build --release --locked --target ${{ matrix.target }} -p ${{ matrix.pkg }} --bin ${{ matrix.bin }}
+      - name: Stage asset
+        shell: bash
+        run: |
+          ext=""
+          [[ "${{ matrix.target }}" == *windows* ]] && ext=".exe"
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}$ext" "dist/${{ matrix.bin }}-${{ matrix.target }}$ext"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.bin }}-${{ matrix.target }}
+          path: dist/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
