@@ -1,0 +1,13 @@
+[package]
+name="wgcore"
+version.workspace=true
+edition.workspace=true
+license.workspace=true
+repository.workspace=true
+
+[dependencies]
+boringtun.workspace=true
+base64.workspace=true
+rand_core.workspace=true
+tracing.workspace=true
+anyhow.workspace=true
