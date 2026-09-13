@@ -28,7 +28,8 @@ fn udp_header(dst:SocketAddr)->Vec<u8>{
 	h
 }
 
-/// Strips that header off a reply, refusing fragments and anything not sent by this flow's destination.
+/// Strips that header off a reply, refusing fragments and address types we cannot parse. The source is
+/// only noted, not enforced: the association is per flow and the proxy at the other end is trusted.
 fn unwrap_udp(datagram:&[u8], dst:SocketAddr)->Option<&[u8]>{
 	if datagram.len()<4|| datagram[2]!=0{return None}
 	let (src, body)=match datagram[3]{
@@ -36,7 +37,7 @@ fn unwrap_udp(datagram:&[u8], dst:SocketAddr)->Option<&[u8]>{
 		4 if datagram.len()>=22=>(SocketAddr::from((Ipv6Addr::from(<[u8;16]>::try_from(&datagram[4..20]).ok()?), u16::from_be_bytes([datagram[20], datagram[21]]))), &datagram[22..]),
 		_=>return None,
 	};
-	if src!=dst{return None}
+	if src!=dst{tracing::trace!("udp {dst}: reply carried source {src}")}
 	Some(body)
 }
 
@@ -205,13 +206,13 @@ mod tests{
 	}
 
 	#[test]
-	fn replies_from_elsewhere_are_refused(){
+	fn replies_from_elsewhere_are_accepted(){
 		let dst:SocketAddr="93.184.216.34:9999".parse().unwrap();
 		let mut datagram=udp_header(dst);
 		datagram.extend_from_slice(b"payload");
-		assert!(unwrap_udp(&datagram, "93.184.216.34:1".parse().unwrap()).is_none(), "wrong port accepted");
-		assert!(unwrap_udp(&datagram, "1.1.1.1:9999".parse().unwrap()).is_none(), "wrong address accepted");
-		assert!(unwrap_udp(&datagram, "[2606:4700::1111]:9999".parse().unwrap()).is_none(), "wrong family accepted");
+		for other in ["93.184.216.34:1", "1.1.1.1:9999", "[2606:4700::1111]:9999"]{
+			assert_eq!(unwrap_udp(&datagram, other.parse().unwrap()), Some(&b"payload"[..]), "source {other} was refused");
+		}
 		let mut fragment=datagram.clone();
 		fragment[2]=1;
 		assert!(unwrap_udp(&fragment, dst).is_none(), "a fragment was accepted");
