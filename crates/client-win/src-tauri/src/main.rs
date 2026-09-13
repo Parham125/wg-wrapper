@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_updater::UpdaterExt;
 use tracing::Level;
 use tracing_subscriber::layer::{Context, SubscriberExt};
 use tracing_subscriber::util::SubscriberInitExt;
@@ -70,6 +71,14 @@ struct StatusOut{state:String, error:Option<String>, stats:Option<StatsOut>, end
 
 #[derive(Serialize, Deserialize)]
 struct Profile{name:String, conf:String}
+
+#[derive(Serialize)]
+struct UpdateInfo{available:bool, version:String, notes:String, current:String}
+
+#[derive(Serialize, Deserialize)]
+struct Settings{auto_update:bool}
+
+impl Default for Settings{fn default()->Self{Settings{auto_update:true}}}
 
 #[cfg(windows)]
 type Dialed=(wgclient::Tunnel, String, wgclient::win::Adapter);
@@ -200,14 +209,61 @@ fn delete_profile(app:AppHandle, name:String)->Result<(), String>{
 	Ok(())
 }
 
+#[tauri::command]
+async fn check_update(app:AppHandle)->Result<UpdateInfo, String>{
+	let current=app.package_info().version.to_string();
+	let found=app.updater().map_err(|e| format!("updater unavailable: {e}"))?.check().await.map_err(|e| format!("update check failed: {e}"))?;
+	match found{
+		Some(u)=>{tracing::info!("update {} available", u.version); Ok(UpdateInfo{available:true, version:u.version.clone(), notes:u.body.clone().unwrap_or_default(), current})}
+		None=>Ok(UpdateInfo{available:false, version:current.clone(), notes:String::new(), current}),
+	}
+}
+
+#[tauri::command]
+async fn install_update(app:AppHandle, shared:State<'_, Shared>)->Result<(), String>{
+	let update=app.updater().map_err(|e| format!("updater unavailable: {e}"))?.check().await.map_err(|e| format!("update check failed: {e}"))?.ok_or_else(|| "Already up to date".to_string())?;
+	let up=shared.session.lock().await.tunnel.is_some();
+	if up{disconnect(shared).await?;} // installer restarts the app, so drop the adapter first to restore routes and dns
+	tracing::info!("installing update {}", update.version);
+	let handle=app.clone();
+	let mut downloaded=0usize;
+	update.download_and_install(move |chunk, total|{
+		downloaded+=chunk;
+		let _=handle.emit("update-progress", serde_json::json!({"downloaded":downloaded, "total":total}));
+	}, ||{}).await.map_err(|e| format!("update failed: {e}"))?;
+	tracing::info!("update installed, restarting");
+	app.restart()
+}
+
+fn settings_path(app:&AppHandle)->Result<PathBuf, String>{
+	let dir=app.path().app_config_dir().map_err(|e| e.to_string())?;
+	std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+	Ok(dir.join("settings.json"))
+}
+
+#[tauri::command]
+async fn get_settings(app:AppHandle)->Result<Settings, String>{
+	let path=settings_path(&app)?;
+	Ok(std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default())
+}
+
+#[tauri::command]
+async fn set_settings(app:AppHandle, settings:Settings)->Result<(), String>{
+	let body=serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
+	std::fs::write(settings_path(&app)?, body).map_err(|e| e.to_string())
+}
+
 fn main(){
 	let _=START.set(Instant::now());
 	tracing_subscriber::registry().with(LogLayer).init();
 	tauri::Builder::default()
+		.plugin(tauri_plugin_process::init())
 		.manage(Shared{session:tokio::sync::Mutex::new(Session{state:"disconnected".to_string(), ..Default::default()})})
-		.invoke_handler(tauri::generate_handler![connect, disconnect, status, log_history, list_profiles, save_profile, delete_profile])
+		.invoke_handler(tauri::generate_handler![connect, disconnect, status, log_history, list_profiles, save_profile, delete_profile, check_update, install_update, get_settings, set_settings])
 		.setup(|app|{
 			let _=HANDLE.set(app.handle().clone());
+			#[cfg(desktop)]
+			app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
 			tracing::info!("client ready");
 			Ok(())
 		})

@@ -24,8 +24,18 @@
       "csp": "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'"
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYxRTA3MDRCQTU3NzUyOEEKUldTS1VuZWxTM0RnOGI3QTc5VjVoV1RLZXdodTBQdXlxWGNJajBibmFkUXN0SGxRcVRJVHo0QjUK",
+      "endpoints": ["https://github.com/Parham125/wg-wrapper/releases/latest/download/latest.json"],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["nsis"],
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
     "shortDescription": "WireGuard client that tunnels over WSS",

@@ -29,12 +29,15 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: crates/client-win/src-tauri
           tauriScript: npx --yes @tauri-apps/cli@^2
           tagName: ${{ github.ref_name }}
           releaseName: ${{ github.ref_name }}
-          includeUpdaterJson: false
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
 
   build:
     strategy:
