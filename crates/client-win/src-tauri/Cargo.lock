@@ -4998,7 +4998,7 @@ dependencies = [
 
 [[package]]
 name = "wg-wrapper-client"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "serde",
  "serde_json",
