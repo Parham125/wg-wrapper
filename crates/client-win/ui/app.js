@@ -6,6 +6,7 @@ const invoke=(cmd, args)=>api().core.invoke(cmd, args);
 const hist=Array.from({length:TICKS}, ()=>({rate:0, hs:false}));
 const tickEls=[];
 let profiles=[], current=null, timer=null, prev=null, busy=false, last={state:"disconnected"};
+let release=null, upError=null, checking=false, installing=false, checked=false, dismissed=false;
 
 function fmtBytes(n){
 	if(n<1024){return n+" B"}
@@ -201,6 +202,57 @@ function closeSheet(){
 	closePanel(el("addForm"));
 }
 
+function paintUpdate(){
+	const ready=!!(release&&release.available), check=el("checkUpdate"), line=el("updateLine"), notes=el("updateNotes"), install=el("installUpdate");
+	check.disabled=checking||installing;
+	check.textContent=checking?"Checking":"Check for updates";
+	line.className="update-line"+(upError?" bad":ready?" good":"");
+	line.textContent=upError?upError:checking?"":ready?release.version+" available":release?"Up to date, "+release.current:"";
+	notes.hidden=!(ready&&release.notes);
+	if(ready&&release.notes){notes.textContent=release.notes}
+	install.hidden=!ready;
+	install.disabled=installing;
+	install.textContent=installing?"Installing":"Install and restart";
+	el("progress").hidden=!installing;
+	el("appVersion").textContent=release?release.current:"";
+	const show=ready&&!dismissed&&!installing;
+	el("banner").hidden=!show;
+	document.body.dataset.banner=show?"1":"0";
+	if(show){el("bannerText").textContent="Update "+release.version+" is ready"}
+}
+async function runCheck(){
+	if(checking||installing){return}
+	checking=true;
+	checked=true;
+	upError=null;
+	paintUpdate();
+	try{release=await invoke("check_update")}
+	catch(e){release=null; upError=explain(e)}
+	finally{checking=false; paintUpdate()}
+}
+// install_update drops the tunnel itself, then the app exits behind the installer, so the bar is never cleared on success.
+async function runInstall(){
+	if(installing){return}
+	installing=true;
+	upError=null;
+	el("bar").classList.remove("wait");
+	el("barFill").style.width="0%";
+	el("progressLine").textContent="Starting download";
+	paintUpdate();
+	try{
+		await invoke("install_update");
+		el("progressLine").textContent="Installer started. wg-wrapper closes to finish.";
+	}catch(e){
+		installing=false;
+		upError=explain(e);
+		paintUpdate();
+	}
+}
+function setAuto(on){
+	el("autoUpdate").dataset.on=on?"1":"0";
+	el("autoUpdate").setAttribute("aria-checked", String(on));
+}
+
 function addLine(text){
 	const body=el("logLines");
 	const blank=body.querySelector(".blank");
@@ -233,6 +285,17 @@ function boot(){
 		el("logToggle").setAttribute("aria-expanded", String(!on));
 	};
 	el("logClose").onclick=()=>{closePanel(el("logPanel")); el("logToggle").setAttribute("aria-expanded", "false")};
+	el("settingsOpen").onclick=()=>{closeSheet(); openPanel(el("settings")); if(!checked){runCheck()}};
+	el("settingsClose").onclick=()=>closePanel(el("settings"));
+	el("checkUpdate").onclick=runCheck;
+	el("installUpdate").onclick=runInstall;
+	el("bannerInstall").onclick=()=>{openPanel(el("settings")); runInstall()};
+	el("bannerLater").onclick=()=>{dismissed=true; paintUpdate()};
+	el("autoUpdate").onclick=()=>{
+		const on=el("autoUpdate").dataset.on!=="1";
+		setAuto(on);
+		invoke("set_settings", {settings:{auto_update:on}}).catch(e=>{setAuto(!on); upError=explain(e); paintUpdate()});
+	};
 	el("logCopy").onclick=()=>{
 		const text=[...el("logLines").querySelectorAll(".ln")].map(p=>p.textContent).join("\n");
 		navigator.clipboard.writeText(text).then(()=>{el("logCopy").textContent="Copied"; setTimeout(()=>el("logCopy").textContent="Copy", 1200)}, ()=>{el("logCopy").textContent="Copy failed"});
@@ -256,6 +319,7 @@ function boot(){
 	document.addEventListener("keydown", ev=>{
 		if(ev.key!=="Escape"){return}
 		closeSheet();
+		closePanel(el("settings"));
 		closePanel(el("logPanel"));
 		el("logToggle").setAttribute("aria-expanded", "false");
 	});
@@ -265,6 +329,13 @@ function boot(){
 		return;
 	}
 	api().event.listen("log", ev=>addLine(ev.payload));
+	api().event.listen("update-progress", ev=>{
+		const p=ev.payload||{}, total=p.total, a=fmtBytes(p.downloaded).split(" "), b=total?fmtBytes(total).split(" "):null;
+		el("bar").classList.toggle("wait", !total);
+		el("barFill").style.width=total?Math.min(100, Math.round(p.downloaded/total*100))+"%":"100%";
+		el("progressLine").textContent=b?"Downloading "+(a[1]===b[1]?a[0]:a.join(" "))+" of "+b.join(" "):"Downloading "+a.join(" ");
+	});
+	invoke("get_settings").then(s=>{setAuto(!!s.auto_update); if(s.auto_update){runCheck()}}).catch(()=>{});
 	invoke("log_history").then(lines=>lines.forEach(addLine)).catch(()=>{});
 	loadProfiles().then(poll).catch(e=>{
 		el("notice").textContent=explain(e);
