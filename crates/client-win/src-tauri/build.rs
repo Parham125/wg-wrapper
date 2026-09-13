@@ -1,8 +1,14 @@
-// Wintun needs an elevated process to create the adapter and edit the routing table, so the exe carries
+// Tauri's default manifest is replaced wholesale, so the Common Controls v6 dependency it normally carries
+// (TaskDialogIndirect lives there) has to be declared again here. Wintun needs an elevated process to create the adapter and edit the routing table, so the exe carries
 // a manifest asking for it up front instead of failing halfway through connect().
 fn main(){
 	let manifest=r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*" />
+    </dependentAssembly>
+  </dependency>
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>
