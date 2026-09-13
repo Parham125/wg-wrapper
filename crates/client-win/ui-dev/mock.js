@@ -6,6 +6,9 @@
 	let store=scene==="empty"?[]:[{name:"Frankfurt relay", conf:CONF(2)}, {name:"Home lab", conf:CONF(3)}, {name:"Amsterdam backup", conf:CONF(4)}];
 	let state=scene==="connected"||scene==="log"?"connected":scene==="error"?"error":scene==="connecting"?"connecting":"disconnected";
 	let error=scene==="error"?"Windows only":null, clock=0, rx=0, tx=0, subs={};
+	let settings={auto_update:q.get("auto")!=="0"};
+	const HAS=q.get("update")==="1";
+	const RELEASE={available:HAS, version:HAS?"0.1.7":"0.1.6", notes:HAS?"Keeps the tunnel up when the relay drops a handshake.\nProbes the path MTU on connect instead of guessing 1380.\nRemembers the last profile after an update.":"", current:"0.1.6"};
 	const emit=(ev, payload)=>(subs[ev]||[]).forEach(f=>f({payload}));
 	const rate=t=>t%53<4?0:Math.round((0.45+0.4*Math.sin(t/11)+0.2*Math.sin(t/3.1))*(t%37<6?1250000:320000));
 	const lines=["   0.01  INFO   wg_wrapper_client  client ready", "   0.02  INFO   wg_wrapper_client  connect requested", "   0.03  INFO   wgclient  resolving wss://fra.example.com/wg", "   0.21  INFO   wgclient  endpoint 203.0.113.44:443", "   0.24  INFO   wgclient  opening adapter via wintun.dll", "   0.58  WARN   wgclient  InsecureTls set, certificate not verified", "   0.90  INFO   wsrelay  websocket open, 1380 byte datagrams", "   1.41  INFO   wgclient  handshake complete with peer kP2v", "   1.42  INFO   wg_wrapper_client  tunnel up"];
@@ -34,6 +37,22 @@
 				if(q.get("fail")==="1"){state="error"; error="Windows only"; throw "Windows only"}
 				state="connected";
 				lines.slice(2).forEach(l=>emit("log", l));
+				return null;
+			}
+			if(cmd==="get_settings"){return {auto_update:settings.auto_update}}
+			if(cmd==="set_settings"){settings=args.settings; return null}
+			if(cmd==="check_update"){
+				await new Promise(r=>setTimeout(r, 550));
+				if(q.get("checkfail")==="1"){throw "No route to the update server. Check the connection and try again."}
+				return RELEASE;
+			}
+			if(cmd==="install_update"){
+				const total=4718592, step=total/12;
+				if(state!=="disconnected"){state="disconnected"; clock=0; rx=0; tx=0}
+				for(let d=0; d<=total; d+=step){
+					emit("update-progress", {downloaded:Math.min(total, Math.round(d)), total});
+					await new Promise(r=>setTimeout(r, 160));
+				}
 				return null;
 			}
 			throw "unknown command "+cmd;

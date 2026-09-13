@@ -13,23 +13,40 @@
 			<span class="picker-name" id="profileName">No profile</span>
 			<svg class="caret" width="9" height="6" viewBox="0 0 9 6" aria-hidden="true"><path d="M1 1l3.5 3.5L8 1" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
 		</button>
-		<button class="ghost" id="logToggle" type="button" aria-expanded="false" aria-controls="logPanel">Log</button>
+		<div class="head-acts">
+			<button class="ghost icon" id="settingsOpen" type="button" aria-label="Settings" title="Settings"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="8" cy="8" r="5.1"/><circle cx="8" cy="8" r="1.9"/><path d="M13.1 8h2.1M10.55 12.42l1.05 1.82M5.45 12.42l-1.05 1.82M2.9 8H.8M5.45 3.58L4.4 1.76M10.55 3.58l1.05-1.82"/></svg></button>
+			<button class="ghost" id="logToggle" type="button" aria-expanded="false" aria-controls="logPanel">Log</button>
+		</div>
 	</header>
 	<div class="statusline" id="statusline" data-state="disconnected"></div>
-	<main class="stage" id="stage">
+	<div class="banner" id="banner" hidden>
+		<p class="banner-text" id="bannerText"></p>
+		<div class="banner-acts">
+			<button class="ghost" id="bannerInstall" type="button">Install</button>
+			<button class="ghost" id="bannerLater" type="button">Later</button>
+		</div>
+	</div>
+	<main class="stage" id="stage" data-state="disconnected">
 		<div class="state">
-			<h1 class="state-word" id="stateWord">Disconnected</h1>
+			<div class="state-head">
+				<h1 class="state-word" id="stateWord">Disconnected</h1>
+				<span class="lamp" aria-hidden="true"></span>
+			</div>
 			<p class="state-sub" id="stateSub">Choose a profile to begin</p>
+			<p class="example">Endpoint = wss://relay.example.com/wg</p>
 		</div>
 		<div class="pulse">
-			<div class="track" id="track" role="img" aria-label="Traffic over the last minute"></div>
+			<div class="scope">
+				<div class="track" id="track" role="img" aria-label="Traffic over the last minute"></div>
+				<div class="peak" id="peak" hidden><span class="peak-label" id="peakLabel"></span></div>
+			</div>
 			<p class="caption" id="caption"></p>
 		</div>
 		<dl class="readout">
-			<div class="row"><dt>Down</dt><dd id="rx">0 B</dd></div>
-			<div class="row"><dt>Up</dt><dd id="tx">0 B</dd></div>
-			<div class="row"><dt>Last handshake</dt><dd id="hs">none yet</dd></div>
-			<div class="row"><dt>Uptime</dt><dd id="uptime">0:00</dd></div>
+			<div class="cell lead-cell"><dt>Down</dt><dd class="big"><span id="rx">0</span><span class="unit" id="rxUnit">B</span></dd></div>
+			<div class="cell lead-cell"><dt>Up</dt><dd class="big"><span id="tx">0</span><span class="unit" id="txUnit">B</span></dd></div>
+			<div class="cell"><dt>Last handshake</dt><dd id="hs">none yet</dd></div>
+			<div class="cell"><dt>Uptime</dt><dd id="uptime">0:00</dd></div>
 		</dl>
 		<div class="act">
 			<p class="notice" id="notice" role="status" hidden></p>
@@ -39,10 +56,12 @@
 	<section class="drawer" id="logPanel" aria-label="Log" hidden>
 		<div class="drawer-head">
 			<h2>Log</h2>
-			<button class="ghost" id="logCopy" type="button">Copy</button>
-			<button class="ghost" id="logClose" type="button">Close</button>
+			<div class="head-acts">
+				<button class="ghost" id="logCopy" type="button">Copy</button>
+				<button class="ghost" id="logClose" type="button">Close</button>
+			</div>
 		</div>
-		<div class="drawer-body" id="logLines"><p class="blank">Nothing logged yet.</p></div>
+		<div class="drawer-body" id="logLines"><p class="blank">Nothing logged yet. Lines appear here as the tunnel opens.</p></div>
 	</section>
 	<section class="sheet" id="sheet" role="dialog" aria-label="Profiles" hidden>
 		<div class="sheet-head">
@@ -53,7 +72,8 @@
 			<ul class="plist" id="plist"></ul>
 			<div class="blank-block" id="plistEmpty" hidden>
 				<p class="blank-title">No profiles yet</p>
-				<p class="blank-note">Paste a WireGuard config with an <code>Endpoint = wss://</code> line to add your first one.</p>
+				<p class="blank-note">Paste a WireGuard config to add one. It needs an Endpoint line pointing at your relay.</p>
+				<p class="example">Endpoint = wss://relay.example.com/wg</p>
 			</div>
 		</div>
 		<div class="sheet-foot"><button class="action quiet" id="addOpen" type="button">Add profile</button></div>
@@ -70,6 +90,32 @@
 		</div>
 		<div class="sheet-foot"><button class="action" type="submit">Save profile</button></div>
 	</form>
+	<section class="sheet" id="settings" role="dialog" aria-label="Settings" hidden>
+		<div class="sheet-head">
+			<h2>Settings</h2>
+			<button class="ghost" id="settingsClose" type="button">Close</button>
+		</div>
+		<div class="sheet-body">
+			<div class="setting">
+				<div class="setting-main">
+					<p class="setting-name">Check for updates on launch</p>
+					<p class="setting-note">Looks once when the app starts. A live tunnel is never interrupted for it.</p>
+				</div>
+				<button class="switch" id="autoUpdate" type="button" role="switch" aria-checked="true" data-on="1"><span class="knob"></span></button>
+			</div>
+			<div class="update">
+				<button class="action quiet slim" id="checkUpdate" type="button">Check for updates</button>
+				<p class="update-line" id="updateLine"></p>
+				<pre class="notes" id="updateNotes" hidden></pre>
+				<button class="action" id="installUpdate" type="button" hidden>Install and restart</button>
+				<div class="progress" id="progress" hidden>
+					<div class="bar" id="bar"><div class="bar-fill" id="barFill"></div></div>
+					<p class="progress-line" id="progressLine">Starting download</p>
+				</div>
+			</div>
+		</div>
+		<div class="sheet-foot plate"><p>wg-wrapper <span id="appVersion"></span></p></div>
+	</section>
 </div>
 <script src="app.js"></script>
 </body>
