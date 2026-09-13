@@ -141,6 +141,7 @@ PersistentKeepalive = 25
 While connected:
 
 - **Routing is the killswitch.** `0.0.0.0/0` becomes two half routes through the adapter plus one host route to the relay through the old gateway. Nothing else can leave.
+- **The local network goes in too.** With `AllowedIPs = 0.0.0.0/0` every LAN subnet of the physical adapter is re-routed into the tunnel and then refused by the server, so only the default gateway and the relay stay reachable outside it.
 - **DNS goes where the conf says.** The adapter gets the lowest interface metric, each `DNS` address gets a route through the tunnel, and a catch-all Name Resolution Policy Table rule points every name at those servers. Without a `DNS` line none of this is applied.
 - **IPv6 is blocked.** Both halves of `::/0` are routed into the adapter and dropped locally.
 

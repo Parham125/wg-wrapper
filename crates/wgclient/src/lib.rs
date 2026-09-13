@@ -277,6 +277,33 @@ pub async fn resolve_endpoint(cfg:&ClientConfig)->anyhow::Result<SocketAddr>{
 	}
 }
 
+/// Reads the "Active Routes" table of `route print -4`: the lowest-metric default route as (gateway, interface ip)
+/// and the on-link subnets sitting on that same interface, which are the LAN prefixes a full tunnel has to swallow.
+pub fn parse_routes(text:&str)->(Option<(Ipv4Addr, Ipv4Addr)>, Vec<(Ipv4Addr, Ipv4Addr)>){
+	let (mut rows, mut active)=(Vec::new(), false);
+	for raw in text.lines(){
+		let line=raw.trim();
+		if line.starts_with("Active Routes:"){active=true; continue}
+		if line.starts_with("Persistent Routes:"){break}
+		if !active{continue}
+		let f:Vec<&str>=line.split_whitespace().collect();
+		if f.len()!=5{continue}
+		let (Ok(dest), Ok(mask), Ok(iface), Ok(metric))=(f[0].parse::<Ipv4Addr>(), f[1].parse::<Ipv4Addr>(), f[3].parse::<Ipv4Addr>(), f[4].parse::<u32>()) else{continue};
+		rows.push((dest, mask, f[2], iface, metric));
+	}
+	let mut best:Option<(u32, Ipv4Addr, Ipv4Addr)>=None;
+	for (dest, mask, gw, iface, metric) in &rows{
+		if !dest.is_unspecified()|| !mask.is_unspecified(){continue}
+		let Ok(gw)=gw.parse::<Ipv4Addr>() else{continue};
+		if best.is_none_or(|(m, _, _)| *metric<m){best=Some((*metric, gw, *iface))}
+	}
+	let Some((_, gateway, ifaceip))=best else{return (None, Vec::new())};
+	// 127/8, 224/4 and the all-ones broadcast are never someone's LAN, and a /32 is a host route, not a subnet.
+	let lan=rows.iter().filter(|(dest, mask, gw, iface, _)| *iface==ifaceip && gw.eq_ignore_ascii_case("on-link") && *mask!=Ipv4Addr::BROADCAST
+		&& dest.octets()[0]!=127 && dest.octets()[0]&0xf0!=224 && *dest!=Ipv4Addr::BROADCAST).map(|(dest, mask, _, _, _)| (*dest, *mask)).collect();
+	(Some((gateway, ifaceip)), lan)
+}
+
 #[cfg(windows)]
 pub mod win{
 	use super::*;
@@ -366,14 +393,13 @@ pub mod win{
 			tracing::warn!("the conf carries no DNS servers, so names keep resolving through the physical adapter and will leak");
 		}
 		// Pin the server to the real default gateway first, so the tunnel routes below cannot swallow it.
-		let mut best:Option<(u32, Ipv4Addr)>=None;
-		for line in run("route", &argv(&["print", "0.0.0.0"]))?.lines(){
-			let f:Vec<&str>=line.split_whitespace().collect();
-			if f.len()<5|| f[0]!="0.0.0.0"|| f[1]!="0.0.0.0"{continue}
-			let (Ok(gw), Ok(metric))=(f[2].parse::<Ipv4Addr>(), f[4].parse::<u32>()) else{continue};
-			if best.is_none_or(|(m, _)| metric<m){best=Some((metric, gw))}
-		}
-		let gateway=best.ok_or_else(|| anyhow!("no ipv4 default gateway to pin {server} to"))?.1;
+		let (default, lan)=parse_routes(&run("route", &argv(&["print", "-4"]))?);
+		let (gateway, ifaceip)=default.ok_or_else(|| anyhow!("no ipv4 default gateway to pin {server} to"))?;
+		// Windows reads a next hop equal to the interface's own address as on-link, so this keeps the gateway
+		// reachable on the physical link even once the LAN subnet below has been pulled into the tunnel.
+		let ongw=argv(&[&gateway.to_string(), "mask", "255.255.255.255", &ifaceip.to_string()]);
+		run("route", &[argv(&["add"]), ongw.clone(), argv(&["metric", "1"])].concat())?;
+		dev.undo.push([argv(&["route", "delete"]), ongw].concat());
 		let host=argv(&[&server.to_string(), "mask", "255.255.255.255", &gateway.to_string()]);
 		run("route", &[argv(&["add"]), host.clone(), argv(&["metric", "1"])].concat())?;
 		dev.undo.push([argv(&["route", "delete"]), host].concat());
@@ -397,6 +423,19 @@ pub mod win{
 					}
 				}
 			}
+		}
+		// A full tunnel has to swallow the LAN too: the physical link's on-link subnet routes are more specific
+		// than the two /1 halves and would otherwise keep winning, so each one is re-added through the adapter.
+		if cfg.allowed_ips.iter().any(|n| matches!(n, IpNet::V4(v) if v.prefix_len()==0)){
+			let mut taken=0;
+			for (dest, netmask) in &lan{
+				if IpAddr::V4(*dest)==cfg.address.network() && IpAddr::V4(*netmask)==mask{continue}
+				let route=argv(&[&dest.to_string(), "mask", &netmask.to_string(), &ip.to_string()]);
+				run("route", &[argv(&["add"]), route.clone(), argv(&["metric", "1", "if", &index.to_string()])].concat())?;
+				dev.undo.push([argv(&["route", "delete"]), route].concat());
+				taken+=1;
+			}
+			tracing::info!("{taken} local network subnet(s) routed into the tunnel, only {gateway} and {server} stay outside");
 		}
 		// IPv6 is blocked while the tunnel is up: both halves of ::/0 point at the adapter, which drops them.
 		for half in ["::/1", "8000::/1"]{
@@ -445,6 +484,59 @@ mod tests{
 
 	const PRIV:&str="qJ9Uq0Ie6/1bV2h0TaXGqUcyqO5qOZ0JqJLQqPqXmFo=";
 	const PUB:&str="1Y0HGMRPPPDCF9BZSGKbiRKFJvCDSCgjF3gVCFkFYxc=";
+
+	const ROUTE_PRINT:&str="\
+===========================================================================
+Interface List
+ 54...00 00 00 00 00 00 ......wg-wrapper
+ 12...a4 b1 c1 d2 e3 f4 ......Intel(R) Wi-Fi 6 AX201 160MHz
+  1...........................Software Loopback Interface 1
+===========================================================================
+
+IPv4 Route Table
+===========================================================================
+Active Routes:
+Network Destination        Netmask          Gateway       Interface  Metric
+          0.0.0.0          0.0.0.0     192.168.70.1   192.168.70.101     50
+        127.0.0.0        255.0.0.0         On-link         127.0.0.1    331
+        127.0.0.1  255.255.255.255         On-link         127.0.0.1    331
+  127.255.255.255  255.255.255.255         On-link         127.0.0.1    331
+     192.168.70.0    255.255.255.0         On-link    192.168.70.101    306
+   192.168.70.101  255.255.255.255         On-link    192.168.70.101    306
+   192.168.70.255  255.255.255.255         On-link    192.168.70.101    306
+       10.244.0.0    255.255.255.0         On-link    192.168.70.101    306
+        10.10.0.0    255.255.255.0         On-link      10.10.0.5      15
+        224.0.0.0        240.0.0.0         On-link         127.0.0.1    331
+        224.0.0.0        240.0.0.0         On-link    192.168.70.101    306
+  255.255.255.255  255.255.255.255         On-link         127.0.0.1    331
+  255.255.255.255  255.255.255.255         On-link    192.168.70.101    306
+===========================================================================
+Persistent Routes:
+  Network Address          Netmask  Gateway Address  Metric
+          0.0.0.0          0.0.0.0      10.10.0.1  Default
+===========================================================================
+";
+
+	#[test]
+	fn route_print_yields_the_gateway_and_the_lan(){
+		let (default, lan)=parse_routes(ROUTE_PRINT);
+		assert_eq!(default, Some(("192.168.70.1".parse().unwrap(), "192.168.70.101".parse().unwrap())));
+		assert_eq!(lan, vec![
+			("192.168.70.0".parse::<Ipv4Addr>().unwrap(), "255.255.255.0".parse::<Ipv4Addr>().unwrap()),
+			("10.244.0.0".parse().unwrap(), "255.255.255.0".parse().unwrap()),
+		], "only the default interface's non-host, non-loopback, non-multicast on-link subnets count");
+		assert_eq!(parse_routes("nothing here"), (None, Vec::new()));
+	}
+
+	#[test]
+	fn the_lowest_metric_default_route_wins(){
+		let two=ROUTE_PRINT.replace("Active Routes:\n", "Active Routes:\n          0.0.0.0          0.0.0.0        10.10.0.1         10.10.0.5     25\n");
+		let (default, lan)=parse_routes(&two);
+		assert_eq!(default, Some(("10.10.0.1".parse().unwrap(), "10.10.0.5".parse().unwrap())));
+		assert_eq!(lan, vec![("10.10.0.0".parse::<Ipv4Addr>().unwrap(), "255.255.255.0".parse::<Ipv4Addr>().unwrap())]);
+		let flipped=two.replace("     25\n", "     55\n");
+		assert_eq!(parse_routes(&flipped).0, Some(("192.168.70.1".parse().unwrap(), "192.168.70.101".parse().unwrap())));
+	}
 
 	#[test]
 	fn full_conf_parses(){
