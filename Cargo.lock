@@ -1554,6 +1554,7 @@ dependencies = [
  "server",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "wgcore",
  "wintun-bindings",
  "wsrelay",

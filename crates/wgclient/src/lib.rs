@@ -2,7 +2,7 @@
 //! Transport is either plain UDP or WSS through an in-process `wsrelay::run_client_on` bridge.
 use anyhow::{anyhow, bail, Context};
 use ipnet::IpNet;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -270,6 +270,7 @@ pub async fn resolve_endpoint(cfg:&ClientConfig)->anyhow::Result<SocketAddr>{
 #[cfg(windows)]
 pub mod win{
 	use super::*;
+	use std::collections::HashSet;
 	use std::os::windows::process::CommandExt;
 	use std::process::Command;
 
