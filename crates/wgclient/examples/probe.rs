@@ -45,6 +45,22 @@ async fn main()->anyhow::Result<()>{
 	let answers=u16::from_be_bytes([payload[6], payload[7]]);
 	let rcode=payload[3]&0x0f;
 	println!("dns reply from {:?} in {:?}: {} bytes, rcode {rcode}, {answers} answer(s), last A record {:?}", ip.source, sent.elapsed(), payload.len(), payload.len().checked_sub(4).map(|i| &payload[i..]));
+	// Plain UDP that is not DNS exercises the server's SOCKS5 UDP ASSOCIATE path: an NTP request to time.cloudflare.com.
+	let mut ntp=vec![0u8;48];
+	ntp[0]=0x23;
+	let builder=PacketBuilder::ipv4(client, [162, 159, 200, 1], 64).udp(40006, 123);
+	let mut packet=Vec::with_capacity(builder.size(ntp.len()));
+	builder.write(&mut packet, &ntp)?;
+	up_tx.send(packet)?;
+	let sent=Instant::now();
+	match down_rx.recv_timeout(Duration::from_secs(10)){
+		Ok(reply)=>{
+			let parsed=PacketHeaders::from_ip_slice(&reply)?;
+			let PayloadSlice::Udp(payload)=parsed.payload else{anyhow::bail!("ntp reply not udp")};
+			println!("ntp reply in {:?}: {} bytes, stratum {}", sent.elapsed(), payload.len(), payload.get(1).copied().unwrap_or(0));
+		}
+		Err(_)=>println!("ntp: no reply within 10s (upstream SOCKS5 may not support UDP ASSOCIATE)"),
+	}
 	let s=tunnel.stats();
 	println!("stats: tx {} rx {} last_handshake {:?}", s.tx_bytes, s.rx_bytes, s.last_handshake.map(|t| t.elapsed().unwrap_or_default()));
 	tunnel.close().await;
