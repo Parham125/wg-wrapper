@@ -369,17 +369,19 @@ pub mod win{
 		let (ip, mask)=(cfg.address.addr(), cfg.address.netmask());
 		run("netsh", &argv(&["interface", "ipv4", "set", "address", &format!("name={name}"), "static", &ip.to_string(), &mask.to_string()]))?;
 		run("netsh", &argv(&["interface", "ipv4", "set", "subinterface", &format!("interface={name}"), &format!("mtu={}", cfg.mtu), "store=persistent"]))?;
+		// Every route below is added at metric 1, so the interface metric has to be 1 too for the tunnel to
+		// outrank the physical link on the LAN subnets it re-routes. Nothing here depends on a DNS line.
+		for (family, af) in [("ipv4", "IPv4"), ("ipv6", "IPv6")]{
+			run("netsh", &argv(&["interface", family, "set", "interface", &name, "metric=1"]))?;
+			// An explicit metric turns the automatic one off, so the undo has to turn it back on.
+			dev.undo.push(argv(&["powershell", "-NoProfile", "-NonInteractive", "-Command", &format!("Set-NetIPInterface -InterfaceAlias '{name}' -AddressFamily {af} -AutomaticMetric Enabled")]));
+		}
 		// Smart multi-homed name resolution queries every interface at once, so setting the adapter's servers is
-		// not enough: the tunnel also has to win on metric and hold a catch-all NRPT rule for every name.
+		// not enough: the tunnel also has to hold a catch-all NRPT rule for every name, on top of the metric above.
 		if let Some((first, rest))=cfg.dns.split_first(){
 			run("netsh", &argv(&["interface", "ipv4", "set", "dnsservers", &format!("name={name}"), "static", &first.to_string(), "primary", "no"]))?;
 			for (i, d) in rest.iter().enumerate(){
 				run("netsh", &argv(&["interface", "ipv4", "add", "dnsservers", &format!("name={name}"), &d.to_string(), &format!("index={}", i+2), "validate=no"]))?;
-			}
-			for (family, af) in [("ipv4", "IPv4"), ("ipv6", "IPv6")]{
-				run("netsh", &argv(&["interface", family, "set", "interface", &name, "metric=1"]))?;
-				// An explicit metric turns the automatic one off, so the undo has to turn it back on.
-				dev.undo.push(argv(&["powershell", "-NoProfile", "-NonInteractive", "-Command", &format!("Set-NetIPInterface -InterfaceAlias '{name}' -AddressFamily {af} -AutomaticMetric Enabled")]));
 			}
 			let servers=cfg.dns.iter().filter(|d| d.is_ipv4()).map(|d| d.to_string()).collect::<Vec<_>>();
 			if !servers.is_empty(){
