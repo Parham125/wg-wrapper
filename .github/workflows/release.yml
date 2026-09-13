@@ -34,7 +34,7 @@ jobs:
           tauriScript: npx --yes @tauri-apps/cli@^2
           tagName: ${{ github.ref_name }}
           releaseName: ${{ github.ref_name }}
-          uploadUpdaterJson: false
+          includeUpdaterJson: false
 
   build:
     strategy:
