@@ -13,6 +13,7 @@
 	"dns": "1.1.1.1:53",
 	"allow_private": false,
 	"udp_idle_secs": 60,
+	"tcp_idle_secs": 7200,
 	"peers": [
 		{
 			"public_key": "sInAGqNJ90nAYbr1fVwDc6a13Vm60e1lb5F07IWDtU4=",

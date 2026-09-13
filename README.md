@@ -76,6 +76,7 @@ Install `wg-wrapper_<version>_x64-setup.exe` from the release, paste a `.conf` w
 | `dns` | Force every peer's DNS to this `ip:53` instead of whatever they asked for. |
 | `mtu` | Default `1420`. |
 | `udp_idle_secs` | Idle timeout for UDP flows through the proxy. Default `60`. |
+| `tcp_idle_secs` | Idle timeout for TCP flows through the proxy. Default `7200`, so keep-alive connections survive long silences. |
 | `allow_private` | `true` lets peers reach private ranges through the proxy. Default `false`. |
 
 ## How traffic is handled

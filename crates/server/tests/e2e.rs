@@ -156,15 +156,15 @@ async fn dns_responder()->SocketAddr{
 struct Wgw{addr:SocketAddr, ws:Option<SocketAddr>, public:[u8;32], keys:[[u8;32];2]}
 
 async fn spawn_server(upstream:&str, dns:Option<&str>)->Wgw{
-	spawn_listening(r#""listen_udp":"127.0.0.1:0""#, upstream, dns).await
+	spawn_listening(r#""listen_udp":"127.0.0.1:0""#, upstream, dns, "").await
 }
 
-async fn spawn_listening(listeners:&str, upstream:&str, dns:Option<&str>)->Wgw{
+async fn spawn_listening(listeners:&str, upstream:&str, dns:Option<&str>, extra:&str)->Wgw{
 	let private=wgcore::generate_key();
 	let keys=[wgcore::generate_key(), wgcore::generate_key()];
 	let dns=dns.map(|d| format!(r#","dns":"{d}""#)).unwrap_or_default();
 	let json=format!(
-		r#"{{"private_key":"{}","address":"10.7.0.1/24","mtu":1420,{listeners},"upstream":"{upstream}"{dns},
+		r#"{{"private_key":"{}","address":"10.7.0.1/24","mtu":1420,{listeners},"upstream":"{upstream}"{dns}{extra},
 		 "peers":[{{"public_key":"{}","allowed_ips":["10.7.0.2/32"]}},{{"public_key":"{}","allowed_ips":["10.7.0.3/32"]}}]}}"#,
 		wgcore::encode_key(&private), wgcore::encode_key(&wgcore::public_key(&keys[0])), wgcore::encode_key(&wgcore::public_key(&keys[1])));
 	let cfg:server::config::Config=serde_json::from_str(&json).unwrap();
@@ -312,7 +312,7 @@ async fn tcp_reaches_the_responder_over_the_ws_relay(){
 	let (backend, hits)=tcp_responder().await;
 	let (echo, _)=udp_responder().await;
 	let (proxy, seen)=socks5_proxy(dns_responder().await, backend, echo, false).await;
-	let wgw=spawn_listening(r#""listen_ws":{"addr":"127.0.0.1:0","path":"/wg"}"#, &format!("socks5://{proxy}"), None).await;
+	let wgw=spawn_listening(r#""listen_ws":{"addr":"127.0.0.1:0","path":"/wg"}"#, &format!("socks5://{proxy}"), None, "").await;
 	let bridge=UdpSocket::bind("127.0.0.1:0").await.unwrap();
 	let bridge_addr=bridge.local_addr().unwrap();
 	tokio::spawn(wsrelay::run_client_on(bridge, format!("ws://{}/wg", wgw.ws.unwrap()), false));
@@ -425,6 +425,47 @@ async fn a_refused_association_drops_the_datagram(){
 	assert!(seen.lock().unwrap().iter().any(|s| s=="associate 0.0.0.0:0"), "the association was never attempted");
 	// Whatever the proxy said about udp, tcp through the same server still works.
 	handshake(&mut client, [93, 184, 216, 34], 40012, 80).await;
+}
+
+/// Opens a flow, lets it go quiet for 2.5s, then pokes it: true if the server reset it in the meantime.
+async fn flow_reset_while_idle(tcp_idle:u64, sport:u16)->bool{
+	let (backend, _)=tcp_responder().await;
+	let (echo, _)=udp_responder().await;
+	let (proxy, _)=socks5_proxy(dns_responder().await, backend, echo, false).await;
+	let wgw=spawn_listening(r#""listen_udp":"127.0.0.1:0""#, &format!("socks5://{proxy}"), None, &format!(r#","tcp_idle_secs":{tcp_idle}"#)).await;
+	let mut client=Client::connect(wgw.keys[0], wgw.public, wgw.addr).await;
+	let dst=[93, 184, 216, 34];
+	let isn=handshake(&mut client, dst, sport, 80).await;
+	let (mut got, mut rst)=(0usize, false);
+	while got<GREETING.len(){
+		let Some(packet)=client.recv_ip(Duration::from_secs(5)).await else{break};
+		if let Some((tcp, payload))=parse_tcp(&packet){rst|=tcp.rst; got+=payload.len()}
+	}
+	assert_eq!(got, GREETING.len(), "the greeting never arrived");
+	tokio::time::sleep(Duration::from_millis(2500)).await;
+	let mut data=TcpHeader::new(sport, 80, 1001, 65535);
+	data.ack=true;
+	data.psh=true;
+	data.acknowledgment_number=isn.wrapping_add(1+got as u32);
+	client.send_ip(&ip_tcp(PEER_A, dst, data, b"still-there")).await;
+	let deadline=Instant::now()+Duration::from_secs(2);
+	let mut acked=false;
+	while let Some(left)=deadline.checked_duration_since(Instant::now()){
+		let Some(packet)=client.recv_ip(left).await else{break};
+		let Some((tcp, _))=parse_tcp(&packet) else{continue};
+		rst|=tcp.rst;
+		acked|=tcp.ack && !tcp.rst;
+		if rst{break}
+	}
+	assert!(rst|| acked, "the flow neither answered nor reset");
+	rst
+}
+
+/// An idle TCP flow is torn down on the configured schedule, not ipstack's hardcoded 60 seconds.
+#[tokio::test(flavor="multi_thread", worker_threads=4)]
+async fn an_idle_tcp_flow_lives_exactly_as_long_as_tcp_idle_secs(){
+	assert!(flow_reset_while_idle(1, 40020).await, "a 1 second idle timeout did not reset a flow quiet for 2.5s");
+	assert!(!flow_reset_while_idle(30, 40021).await, "a 30 second idle timeout reset a flow quiet for only 2.5s");
 }
 
 #[test]

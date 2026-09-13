@@ -34,6 +34,8 @@ pub struct Config{
 	#[serde(default)] pub allow_private:bool,
 	/// How long a relayed UDP flow may sit with no traffic in either direction before it is torn down.
 	#[serde(default)] pub udp_idle_secs:Option<u64>,
+	/// How long a relayed TCP flow may sit with no traffic in either direction before it is reset.
+	#[serde(default)] pub tcp_idle_secs:Option<u64>,
 	pub peers:Vec<PeerConfig>,
 }
 
@@ -79,6 +81,10 @@ impl Config{
 	pub fn mtu(&self)->u16{self.mtu.unwrap_or(1420)}
 
 	pub fn udp_idle(&self)->std::time::Duration{std::time::Duration::from_secs(self.udp_idle_secs.unwrap_or(60))}
+
+	/// Long by default: keep-alive connections from games and browsers go quiet for a long time and
+	/// must survive it, unlike ipstack's own 60 second default.
+	pub fn tcp_idle(&self)->std::time::Duration{std::time::Duration::from_secs(self.tcp_idle_secs.unwrap_or(7200))}
 
 	pub fn validate(&self)->anyhow::Result<()>{
 		if self.listen_udp.is_none() && self.listen_ws.is_none(){bail!("set at least one of listen_udp or listen_ws")}
