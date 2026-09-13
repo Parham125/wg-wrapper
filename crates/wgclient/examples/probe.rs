@@ -61,6 +61,24 @@ async fn main()->anyhow::Result<()>{
 		}
 		Err(_)=>println!("ntp: no reply within 10s (upstream SOCKS5 may not support UDP ASSOCIATE)"),
 	}
+	// PROBE_BURST=a.b.c.d,e.f.g.h,... fires one NTP request per address at once, like a game pinging many relays.
+	if let Ok(list)=std::env::var("PROBE_BURST"){
+		let ips:Vec<[u8;4]>=list.split(",").filter_map(|s| s.trim().parse::<std::net::Ipv4Addr>().ok()).map(|a| a.octets()).collect();
+		for (i, ip) in ips.iter().enumerate(){
+			let builder=PacketBuilder::ipv4(client, *ip, 64).udp(41000+i as u16, 123);
+			let mut packet=Vec::with_capacity(builder.size(ntp.len()));
+			builder.write(&mut packet, &ntp)?;
+			up_tx.send(packet)?;
+		}
+		let started=Instant::now();
+		let mut got=std::collections::HashSet::new();
+		while got.len()<ips.len() && started.elapsed()<Duration::from_secs(8){
+			if let Ok(reply)=down_rx.recv_timeout(Duration::from_millis(200)){
+				if let Ok(parsed)=PacketHeaders::from_ip_slice(&reply){if let Some(NetHeaders::Ipv4(ip, _))=parsed.net{got.insert(ip.source);}}
+			}
+		}
+		println!("burst: {} of {} relays answered within {:?}", got.len(), ips.len(), started.elapsed());
+	}
 	let s=tunnel.stats();
 	println!("stats: tx {} rx {} last_handshake {:?}", s.tx_bytes, s.rx_bytes, s.last_handshake.map(|t| t.elapsed().unwrap_or_default()));
 	tunnel.close().await;

@@ -6,7 +6,7 @@ pub mod net;
 use crate::config::{parse_upstream, Config, Upstream};
 use crate::net::{allowed_dst, peer_for, tcp_rst, PacketDev};
 use ipnet::IpNet;
-use ipstack::{IpStack, IpStackConfig, IpStackStream};
+use ipstack::{IpStack, IpStackConfig, IpStackStream, TcpConfig};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -59,7 +59,7 @@ pub async fn start(cfg:Config)->anyhow::Result<Running>{
 	let flows=Arc::new(Semaphore::new(MAX_FLOWS));
 	let counts:Arc<Vec<AtomicUsize>>=Arc::new(cfg.peers.iter().map(|_| AtomicUsize::new(0)).collect());
 	let mut stack_cfg=IpStackConfig::default();
-	stack_cfg.mtu_unchecked(mtu).packet_information(false).udp_timeout(cfg.udp_idle()).tcp_timeout(cfg.tcp_idle());
+	stack_cfg.mtu_unchecked(mtu).packet_information(false).udp_timeout(cfg.udp_idle()).with_tcp_config(TcpConfig{timeout:cfg.tcp_idle(), ..Default::default()});
 	let mut stack=IpStack::new(stack_cfg, PacketDev::new(from_wg, to_wg));
 	// Peer -> stack: decrypt, enforce cryptokey routing and isolation, then hand the IP packet up.
 	tokio::spawn({
