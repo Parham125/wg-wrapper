@@ -2,7 +2,7 @@
 //! Transport is either plain UDP or WSS through an in-process `wsrelay::run_client_on` bridge.
 use anyhow::{anyhow, bail, Context};
 use ipnet::IpNet;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -102,9 +102,9 @@ pub trait Tun:Send+Sync+'static{
 }
 
 #[derive(Clone, Debug)]
-pub struct Stats{pub rx_bytes:u64, pub tx_bytes:u64, pub last_handshake:Option<SystemTime>, pub connected_since:SystemTime}
+pub struct Stats{pub rx_bytes:u64, pub tx_bytes:u64, pub v6_dropped:u64, pub last_handshake:Option<SystemTime>, pub connected_since:SystemTime}
 
-struct Counters{rx:AtomicU64, tx:AtomicU64}
+struct Counters{rx:AtomicU64, tx:AtomicU64, v6_dropped:AtomicU64}
 
 pub struct Tunnel{
 	wg:Arc<Mutex<Wg>>,
@@ -137,7 +137,7 @@ impl Tunnel{
 		let sock=Arc::new(UdpSocket::bind(bind).await?);
 		sock.connect(peer).await.with_context(|| format!("connecting to {peer}"))?;
 		let wg=Arc::new(Mutex::new(wg));
-		let counters=Arc::new(Counters{rx:AtomicU64::new(0), tx:AtomicU64::new(0)});
+		let counters=Arc::new(Counters{rx:AtomicU64::new(0), tx:AtomicU64::new(0), v6_dropped:AtomicU64::new(0)});
 		let shutdown=Arc::new(AtomicBool::new(false));
 		let tun:Arc<dyn Tun>=Arc::from(tun);
 		let (from_tun, mut from_tun_rx)=mpsc::unbounded_channel::<Vec<u8>>();
@@ -181,6 +181,8 @@ impl Tunnel{
 			async move{
 				let mut net_out=Vec::new();
 				while let Some(p)=from_tun_rx.recv().await{
+					// IPv6 is blocked on the client for now, so it is black-holed here instead of reaching the server.
+					if p.first().is_some_and(|b| b>>4==6){counters.v6_dropped.fetch_add(1, Ordering::Relaxed); tracing::debug!("dropped an ipv6 packet of {} bytes from the tun", p.len()); continue}
 					net_out.clear();
 					wg.lock().unwrap().encapsulate(0, &p, &mut net_out);
 					for d in &net_out{counters.tx.fetch_add(d.len() as u64, Ordering::Relaxed); let _=sock.send(d).await;}
@@ -222,6 +224,7 @@ impl Tunnel{
 		Stats{
 			rx_bytes:self.counters.rx.load(Ordering::Relaxed),
 			tx_bytes:self.counters.tx.load(Ordering::Relaxed),
+			v6_dropped:self.counters.v6_dropped.load(Ordering::Relaxed),
 			last_handshake:since.and_then(|d| SystemTime::now().checked_sub(d)),
 			connected_since:self.connected_since,
 		}
@@ -384,8 +387,17 @@ pub mod win{
 				}
 			}
 		}
+		// IPv6 is blocked while the tunnel is up: both halves of ::/0 point at the adapter, which drops them.
+		for half in ["::/1", "8000::/1"]{
+			let net=half.parse::<IpNet>()?;
+			if cfg.allowed_ips.contains(&net){continue}
+			let route=argv(&[half, &format!("interface={index}")]);
+			run("netsh", &[argv(&["interface", "ipv6", "add", "route"]), route.clone(), argv(&["metric=1"])].concat())?;
+			dev.undo.push([argv(&["netsh", "interface", "ipv6", "delete", "route"]), route].concat());
+		}
 		// Each server also gets its own route, so DNS never rides on whatever allowed_ips happened to cover.
-		for d in &cfg.dns{
+		let mut seen=HashSet::new();
+		for d in cfg.dns.iter().filter(|d| seen.insert(**d)){
 			match d{
 				IpAddr::V4(a)=>{
 					let route=argv(&[&a.to_string(), "mask", "255.255.255.255", &ip.to_string()]);

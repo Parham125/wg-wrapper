@@ -165,6 +165,32 @@ async fn dns_round_trips_over_the_udp_transport(){
 	tunnel.close().await;
 }
 
+/// IPv6 is blocked on the client, so a v6 packet off the tun must never be encapsulated.
+#[tokio::test(flavor="multi_thread", worker_threads=4)]
+async fn ipv6_packets_never_reach_the_server(){
+	let (proxy, seen)=socks5_proxy(dns_responder().await).await;
+	let wgw=spawn_server(&format!("socks5://{proxy}"), false).await;
+	let (up_tx, up_rx)=channel();
+	let (down_tx, down_rx)=channel();
+	let tunnel=Tunnel::connect(config(&wgw, Endpoint::Udp(wgw.udp)), Box::new(MockTun{up:Mutex::new(up_rx), down:Mutex::new(down_tx)})).await.unwrap();
+	let builder=PacketBuilder::ipv6([0xfd;16], [0x20, 1, 0x48, 0x60, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x88, 0x88], 64).udp(40005, 53);
+	let mut packet=Vec::with_capacity(builder.size(DNS_QUERY.len()));
+	builder.write(&mut packet, DNS_QUERY).unwrap();
+	let before=tunnel.stats().tx_bytes;
+	up_tx.send(packet).unwrap();
+	let deadline=tokio::time::Instant::now()+Duration::from_secs(5);
+	while tunnel.stats().v6_dropped==0{
+		assert!(tokio::time::Instant::now()<deadline, "the ipv6 packet was never seen");
+		tokio::time::sleep(Duration::from_millis(20)).await;
+	}
+	assert_eq!(tunnel.stats().tx_bytes, before, "an ipv6 packet was encrypted and sent");
+	assert!(down_rx.try_recv().is_err(), "something came back for a blocked ipv6 packet");
+	// The v4 path has to survive the drop, and nothing may have left through the proxy yet.
+	assert_eq!(answer(&up_tx, &down_rx).await, DNS_ANSWER);
+	assert_eq!(seen.lock().unwrap().as_slice(), ["1.1.1.1:53"]);
+	tunnel.close().await;
+}
+
 /// The GUI parks the tunnel in shared Tauri state, so these have to stay thread safe.
 #[test]
 fn the_public_types_are_send_and_sync(){

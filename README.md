@@ -93,6 +93,9 @@ installs a catch-all Name Resolution Policy Table rule that points every namespa
 Disconnecting removes the rule, the routes and the metric, and flushes the resolver cache. If the conf has no
 `DNS` line none of this is applied and name resolution keeps using the physical adapter's resolvers.
 
+IPv6 is blocked for as long as the tunnel is up: both halves of `::/0` are routed into the adapter and every
+v6 packet that lands there is dropped locally instead of being sent to the server.
+
 Building it needs `wintun.dll`, which is not in the repository:
 
 ```
