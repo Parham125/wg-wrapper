@@ -1,5 +1,5 @@
 "use strict";
-const TICKS=60, WORDS={disconnected:"Disconnected", connecting:"Connecting", connected:"Connected", error:"Failed"};
+const TICKS=60, BAR=126, BASE=16, WORDS={disconnected:"Disconnected", connecting:"Connecting", connected:"Connected", error:"Failed"};
 const el=id=>document.getElementById(id);
 const api=()=>window.__TAURI__;
 const invoke=(cmd, args)=>api().core.invoke(cmd, args);
@@ -22,6 +22,12 @@ function fmtAgo(s){
 	if(s===null||s===undefined){return "none yet"}
 	return s<60?`${s}s ago`:`${Math.floor(s/60)}m ${String(s%60).padStart(2, "0")}s ago`;
 }
+// Splits "17.2 MB" so the figure can sit large and the unit small beside it.
+function setAmount(numId, unitId, n){
+	const s=fmtBytes(n), i=s.indexOf(" ");
+	el(numId).textContent=s.slice(0, i);
+	el(unitId).textContent=s.slice(i+1);
+}
 function endpointOf(conf){
 	const m=/^[ \t]*Endpoint[ \t]*=[ \t]*(.+?)[ \t]*$/mi.exec(conf||"");
 	return m?m[1]:"no endpoint in config";
@@ -34,11 +40,19 @@ function explain(e){
 
 function drawTicks(live){
 	const max=Math.max(1, ...hist.map(h=>h.rate));
+	let top=0;
 	for(let i=0; i<TICKS; i++){
-		const h=hist[i], t=tickEls[i];
-		t.style.height=h.rate>0?Math.max(3, Math.round(Math.pow(h.rate/max, 0.55)*58))+"px":"0px";
+		const h=hist[i], t=tickEls[i], px=h.rate>0?Math.max(2, Math.round(Math.pow(h.rate/max, 0.55)*BAR)):0;
+		t.style.height=px+"px";
 		t.classList.toggle("on", live&&h.rate>0);
 		t.classList.toggle("hs", h.hs);
+		if(px>top){top=px}
+	}
+	const marker=el("peak"), show=live&&max>1;
+	marker.hidden=!show;
+	if(show){
+		marker.style.bottom=(BASE+top)+"px";
+		el("peakLabel").textContent="peak "+fmtBytes(max)+"/s";
 	}
 }
 function pushSample(rate, hs){
@@ -57,21 +71,22 @@ function paint(s){
 	el("stateWord").textContent=WORDS[st]||"Disconnected";
 	const sub=el("stateSub"), empty=profiles.length===0;
 	el("stage").dataset.empty=empty?"1":"0";
+	el("stage").dataset.state=st;
 	sub.className="state-sub";
 	if(empty){
 		el("stateWord").textContent="No profiles";
 		sub.className="state-sub lead";
-		sub.textContent="Paste a WireGuard config to add one. It needs an Endpoint line pointing at your wss:// relay.";
+		sub.textContent="Paste a WireGuard config to add one. It needs an Endpoint line like this:";
 	}else if(st==="connected"){sub.textContent=s.endpoint||"connected"}
 	else if(st==="connecting"){sub.textContent="reaching "+(current?endpointOf(current.conf):"the relay")}
 	else{sub.textContent=current?endpointOf(current.conf):"Choose a profile to begin"}
 	const stats=s.stats;
-	el("rx").textContent=fmtBytes(stats?stats.rx_bytes:0);
-	el("tx").textContent=fmtBytes(stats?stats.tx_bytes:0);
+	setAmount("rx", "rxUnit", stats?stats.rx_bytes:0);
+	setAmount("tx", "txUnit", stats?stats.tx_bytes:0);
 	el("hs").textContent=stats?fmtAgo(stats.last_handshake_secs_ago):"none yet";
 	el("uptime").textContent=fmtDur(stats?stats.connected_secs:0);
-	const peak=Math.max(0, ...hist.map(h=>h.rate));
-	el("caption").textContent=empty?"":live?(peak>0?"peak "+fmtBytes(peak)+"/s in the last minute":"tunnel is up, nothing moving yet"):st==="connecting"?"waiting for the first handshake":"traffic appears here once the tunnel is up";
+	const peak=Math.max(0, ...hist.map(h=>h.rate)), shook=hist.some(h=>h.hs);
+	el("caption").textContent=empty?"":live?(peak>0?(shook?"last 60 seconds, notches mark handshakes":"last 60 seconds"):"tunnel is up, nothing moving yet"):st==="connecting"?"waiting for the first handshake":"traffic appears here once the tunnel is up";
 	drawTicks(live);
 	const btn=el("action");
 	btn.textContent=empty?"Add profile":live?"Disconnect":st==="connecting"?"Connecting":"Connect";
@@ -179,7 +194,7 @@ function openPanel(node){
 }
 function closePanel(node){
 	node.dataset.open="0";
-	setTimeout(()=>{if(node.dataset.open!=="1"){node.hidden=true}}, 180);
+	setTimeout(()=>{if(node.dataset.open!=="1"){node.hidden=true}}, 200);
 }
 function closeSheet(){
 	closePanel(el("sheet"));
@@ -203,7 +218,7 @@ function boot(){
 	for(let i=0; i<TICKS; i++){
 		const d=document.createElement("div");
 		d.className="tick";
-		d.style.height="1px";
+		d.style.height="0px";
 		track.append(d);
 		tickEls.push(d);
 	}
