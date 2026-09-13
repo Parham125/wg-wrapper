@@ -1,32 +1,102 @@
-# wg-wrapper
+<h1 align="center">wg-wrapper</h1>
 
-A userspace WireGuard server whose peer traffic egresses only through a SOCKS5 proxy, with peers isolated
-from each other, plus a bridge that carries WireGuard over WebSocket (ws/wss) for networks that block UDP.
+<p align="center">
+WireGuard that can only leave through your SOCKS5, carried over WebSocket where UDP is blocked,<br>
+with a Windows client that needs one <code>.conf</code> and one button.
+</p>
 
-## Isolation
+<p align="center">
+<a href="https://github.com/Parham125/wg-wrapper/actions/workflows/ci.yml"><img alt="ci" src="https://github.com/Parham125/wg-wrapper/actions/workflows/ci.yml/badge.svg"></a>
+<a href="https://github.com/Parham125/wg-wrapper/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/Parham125/wg-wrapper?display_name=tag"></a>
+<a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-8FC9A9"></a>
+</p>
 
-A peer may reach the public internet and nothing else. The server refuses the tunnel subnet itself (so peers
-cannot reach each other or the gateway), loopback, link-local, unspecified, multicast and broadcast, and by
-default every private, shared or reserved range too: 10/8, 172.16/12, 192.168/16, 100.64/10, 192.0.0/24,
-198.18/15, 240/4 and fc00::/7. Blocked TCP gets an RST, everything else is dropped. Set `"allow_private": true`
-in the config if the proxy is meant to reach a private network. Decrypted packets are also checked against the
-sending peer's `allowed_ips`, so a peer cannot spoof another's source address.
+## What it does
 
-## Binaries
+```mermaid
+flowchart LR
+    P[WireGuard peer] -- "wss://host/wg" --> R[wgw-bridge relay<br>or Caddy]
+    R -- "udp 127.0.0.1" --> S["wgw-server<br>boringtun + userspace TCP/IP"]
+    S -- "socks5 CONNECT / UDP ASSOCIATE" --> X[upstream SOCKS5]
+    X --> I((internet))
+    S x--x O[other peers, gateway,<br>host, private ranges]
+```
 
-- `wgw-server` - the WireGuard server. Configured by a JSON file, see `config.example.json`.
-- `wgw-bridge` - the WebSocket bridge, both halves. One WireGuard datagram is one binary WebSocket message.
+- **SOCKS5 only.** There is no TUN device and no kernel routing. Every TCP flow, every UDP flow and every DNS query a peer sends is terminated in userspace and re-dialed through the proxy. There is nothing else it could go through.
+- **Peers are alone.** A peer sees the public internet through the proxy and nothing else: not other peers, not the gateway, not the host, not the private network behind the proxy unless you opt in.
+- **WebSocket transport.** One WireGuard datagram is one binary WebSocket frame. Works behind Caddy or nginx on 443 next to a real website, and with a stock WireGuard client through the bridge.
+- **No root, no kernel module.** A static musl binary, one JSON file, done.
 
-## Bridge
+## Quick start
 
-On the client machine, listen on a local UDP port and tunnel it to the relay. Point the WireGuard peer's
-`Endpoint` at `--listen`:
+### 1. Server (~3 min)
+
+Download `wgw-server-x86_64-unknown-linux-musl` from the [latest release](https://github.com/Parham125/wg-wrapper/releases/latest), then:
+
+```
+chmod +x wgw-server && ./wgw-server genkey
+```
+
+Put the private key in `config.json` (start from [`config.example.json`](config.example.json)), add one peer, then:
+
+```
+RUST_LOG=info ./wgw-server --config config.json
+```
+
+The server prints its public key on startup. Give that and the peer's private key to the client.
+
+### 2. Client with a stock WireGuard app (~1 min)
 
 ```
 wgw-bridge client --listen 127.0.0.1:51820 --url wss://vpn.example.com/wg
 ```
 
-On the server, terminate TLS and hand datagrams to the local WireGuard endpoint:
+Then set `Endpoint = 127.0.0.1:51820` in the WireGuard app. Add `--insecure` for a self-signed relay.
+
+### 3. Windows client (~1 min)
+
+Install `wg-wrapper_<version>_x64-setup.exe` from the release, paste a `.conf` whose `Endpoint` is the `wss://` URL, press Connect.
+
+<p align="center">
+<img src="crates/client-win/screenshots/06-connected.png" width="380" alt="wg-wrapper Windows client, connected">
+</p>
+
+## Server config
+
+`config.json`, all keys except the first four and `peers` are optional:
+
+| Key | What it does |
+|---|---|
+| `private_key` | Server key, base64. `wgw-server genkey` makes one. |
+| `address` | Tunnel subnet with the gateway address, e.g. `10.7.0.1/24`. |
+| `upstream` | `socks5://user:pass@host:1080`. Credentials may be percent-encoded. |
+| `peers[]` | `public_key`, `allowed_ips`, optional `preshared_key` and per-peer `upstream`. |
+| `listen_udp` | Public WireGuard UDP listener. Omit for WebSocket only. |
+| `listen_ws` | `{addr, path, cert, key}`. Omit `cert`/`key` to run plain `ws://` behind a reverse proxy. |
+| `dns` | Force every peer's DNS to this `ip:53` instead of whatever they asked for. |
+| `mtu` | Default `1420`. |
+| `udp_idle_secs` | Idle timeout for UDP flows through the proxy. Default `60`. |
+| `allow_private` | `true` lets peers reach private ranges through the proxy. Default `false`. |
+
+## How traffic is handled
+
+| Peer sends | Server does |
+|---|---|
+| TCP to a public address | SOCKS5 `CONNECT`, bidirectional copy |
+| UDP to port 53 | DNS over TCP through the proxy, `TC` bit set if the answer would not fit |
+| Any other UDP | SOCKS5 `UDP ASSOCIATE`, one association per flow |
+| Anything to the tunnel subnet, gateway, loopback, link-local, multicast, broadcast | TCP gets an `RST`, the rest is dropped |
+| Anything to 10/8, 172.16/12, 192.168/16, 100.64/10, 192.0.0/24, 198.18/15, 240/4, fc00::/7 | Same, unless `allow_private` |
+| A packet whose source is not in that peer's `allowed_ips` | Dropped before it reaches the stack |
+| A handshake flood | Rate limited with WireGuard cookies, endpoints only move on authenticated packets |
+
+Flows are capped at 4096 in total and 512 per peer, with timeouts on every proxy dial.
+
+## WebSocket relay
+
+`wgw-bridge relay` terminates the WebSocket side and forwards to any WireGuard UDP port, ours or the kernel's. Each connection gets its own local UDP socket, so roaming and multiple clients behind one NAT work.
+
+Standalone with TLS:
 
 ```
 wgw-bridge relay --listen 0.0.0.0:443 --path /wg --target 127.0.0.1:51820 \
@@ -34,12 +104,7 @@ wgw-bridge relay --listen 0.0.0.0:443 --path /wg --target 127.0.0.1:51820 \
   --key  /etc/letsencrypt/live/vpn.example.com/privkey.pem
 ```
 
-Add `--insecure` to the client to skip certificate verification against a self-signed relay. Requests to any
-path other than `--path` get a 404, so the relay can share a hostname with a real site.
-
-## Behind Caddy
-
-Drop `--cert`/`--key`, bind the relay to localhost, and let Caddy own port 443 and the certificate:
+Behind Caddy, which then owns the certificate and can serve a normal site on the same host:
 
 ```
 wgw-bridge relay --listen 127.0.0.1:8443 --path /wg --target 127.0.0.1:51820
@@ -52,19 +117,11 @@ vpn.example.com {
 }
 ```
 
-Set `RUST_LOG=debug` for per-connection detail; the default is `info`.
+`wgw-server` can also open the WebSocket listener itself via `listen_ws`, in which case no separate relay process is needed. `--max-conns` (default 1024) caps concurrent relay connections.
 
 ## Windows client
 
-`crates/client-win` is a small Tauri desktop app that dials one relay. It reads a standard WireGuard `.conf`,
-opens a Wintun adapter, and runs the tunnel in-process over WSS, so no separate `wgw-bridge` is needed on the
-client. Profiles are saved as JSON in the app config directory. The window shows connection state, the last
-minute of traffic, byte counters, and the time since the last handshake.
-
-It must run as administrator. Creating the Wintun adapter and editing the routing table both require it, so the
-exe carries a manifest that asks for elevation at launch.
-
-The config it expects is a normal WireGuard file with the peer endpoint pointed at the relay:
+`crates/client-win` is a Tauri app. It reads a normal WireGuard `.conf`, opens a Wintun adapter, and runs the tunnel in-process over WSS. No bridge process, no WireGuard installation.
 
 ```
 [Interface]
@@ -75,37 +132,45 @@ DNS = 1.1.1.1
 [Peer]
 PublicKey = <server public key>
 Endpoint = wss://vpn.example.com/wg
-InsecureTls = true
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25
 ```
 
-`Endpoint` may be `wss://`, `ws://` or a plain `host:port` for UDP. `InsecureTls = true` skips certificate
-verification, which you only want against a self-signed relay.
+`Endpoint` may be `wss://`, `ws://` or `host:port` for plain UDP. `InsecureTls = true` under `[Peer]` skips certificate verification for a self-signed relay.
 
-There is no separate killswitch. `AllowedIPs = 0.0.0.0/0` installs default routes through the adapter and a
-single host route to the relay through the old gateway, so nothing but the relay connection can leave the
-machine while the tunnel is up. Disconnecting drops the adapter, which restores the routes and DNS.
+While connected:
 
-Every name is resolved through the servers in the conf. Windows normally queries all interfaces at once, so
-the client gives the adapter the lowest interface metric, routes each `DNS` address through the tunnel, and
-installs a catch-all Name Resolution Policy Table rule that points every namespace at those servers.
-Disconnecting removes the rule, the routes and the metric, and flushes the resolver cache. If the conf has no
-`DNS` line none of this is applied and name resolution keeps using the physical adapter's resolvers.
+- **Routing is the killswitch.** `0.0.0.0/0` becomes two half routes through the adapter plus one host route to the relay through the old gateway. Nothing else can leave.
+- **DNS goes where the conf says.** The adapter gets the lowest interface metric, each `DNS` address gets a route through the tunnel, and a catch-all Name Resolution Policy Table rule points every name at those servers. Without a `DNS` line none of this is applied.
+- **IPv6 is blocked.** Both halves of `::/0` are routed into the adapter and dropped locally.
 
-IPv6 is blocked for as long as the tunnel is up: both halves of `::/0` are routed into the adapter and every
-v6 packet that lands there is dropped locally instead of being sent to the server.
+Disconnecting removes every route and rule it added, resets the metric and DNS, and flushes the resolver cache. The app asks for administrator rights at launch because Wintun and the routing table need them.
 
-Building it needs `wintun.dll`, which is not in the repository:
+## Build from source
+
+```
+cargo build --release --workspace
+```
+
+The Windows client is outside the workspace and needs `wintun.dll`, which is not in the repository:
 
 ```
 crates/client-win/scripts/fetch-wintun.sh
 cd crates/client-win/src-tauri && npx --yes @tauri-apps/cli@^2 build
 ```
 
-That produces an NSIS installer under `src-tauri/target/release/bundle/nsis`. Release tags build it in CI and
-attach it to the GitHub release. Screenshots of the interface are in `crates/client-win/screenshots`.
+Tagging `v*` builds everything in CI and attaches the binaries and the installer to the release.
+
+## Layout
+
+| Crate | Role |
+|---|---|
+| `wgcore` | Multi-peer boringtun wrapper: handshake routing, cookies, timers, authenticated roaming |
+| `server` | `wgw-server`: ipstack, isolation rules, SOCKS5 egress, config |
+| `wsrelay` | `wgw-bridge`: WebSocket relay and UDP client bridge |
+| `wgclient` | Single-peer engine plus the Wintun, route and DNS layer for Windows |
+| `client-win` | Tauri desktop app |
 
 ## License
 
-MIT, see LICENSE.
+MIT, see [LICENSE](LICENSE).
