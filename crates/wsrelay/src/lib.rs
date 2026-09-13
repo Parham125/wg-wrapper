@@ -13,7 +13,7 @@ use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, 
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::{Bytes, Message};
 use tokio_tungstenite::Connector;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 /// Largest WireGuard datagram we are willing to move in either direction.
 pub const MAX_DATAGRAM:usize=65535;
@@ -168,7 +168,9 @@ async fn client_peer(sock:Arc<UdpSocket>, peer:SocketAddr, url:String, connector
 						d=rx.recv()=>{
 							let Some(d)=d else{return};
 							deadline=Instant::now()+IDLE;
+							let n=d.len();
 							if let Err(e)=tx.send(Message::Binary(d)).await{debug!(%peer, error=%e, "ws write failed"); break "write error"}
+							trace!(%peer, n, "frame sent");
 						}
 						m=stream.next()=>{
 							match m{
@@ -176,6 +178,7 @@ async fn client_peer(sock:Arc<UdpSocket>, peer:SocketAddr, url:String, connector
 								Some(Err(e))=>{debug!(%peer, error=%e, "ws read failed"); break "read error"}
 								Some(Ok(Message::Binary(b)))=>{
 									deadline=Instant::now()+IDLE;
+									trace!(%peer, n=b.len(), "frame received");
 									if let Err(e)=sock.send_to(&b, peer).await{warn!(%peer, error=%e, "udp send failed")}
 								}
 								Some(Ok(Message::Close(_)))=>break "closed",

@@ -170,7 +170,8 @@ impl Tunnel{
 					counters.rx.fetch_add(n as u64, Ordering::Relaxed);
 					net_out.clear();
 					ip_out.clear();
-					wg.lock().unwrap().recv_from_network(peer, &buf[..n], &mut net_out, &mut ip_out);
+					let idx=wg.lock().unwrap().recv_from_network(peer, &buf[..n], &mut net_out, &mut ip_out);
+					if counters.rx.load(Ordering::Relaxed)<2048{tracing::debug!("{n} bytes from {peer}: peer {idx:?}, {} to send, {} decrypted", net_out.len(), ip_out.len())}
 					for d in &net_out{counters.tx.fetch_add(d.len() as u64, Ordering::Relaxed); let _=sock.send(d).await;}
 					for p in ip_out.drain(..){if to_tun.send(p).is_err(){return}}
 				}
@@ -205,7 +206,7 @@ impl Tunnel{
 		// An empty packet with no live session is exactly boringtun's handshake initiation path.
 		let mut init=Vec::new();
 		wg.lock().unwrap().encapsulate(0, &[], &mut init);
-		for d in &init{counters.tx.fetch_add(d.len() as u64, Ordering::Relaxed); sock.send(d).await?;}
+		for d in &init{counters.tx.fetch_add(d.len() as u64, Ordering::Relaxed); sock.send(d).await?; tracing::debug!("sent handshake init, {} bytes from {} to {peer}", d.len(), sock.local_addr()?);}
 		let deadline=tokio::time::Instant::now()+HANDSHAKE_TIMEOUT;
 		while wg.lock().unwrap().time_since_last_handshake(0).is_none(){
 			if tokio::time::Instant::now()>=deadline{

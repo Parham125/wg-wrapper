@@ -98,13 +98,15 @@ impl Wg{
 		let (idx, kind)=match limiter.verify_packet(Some(from.ip()), datagram, &mut self.scratch){
 			Ok(Packet::HandshakeInit(p))=>{
 				let hs=parse_handshake_anon(&self.private, &self.public, &p).ok()?;
-				(*self.by_key.get(&hs.peer_static_public)?, 1u8)
+				let idx=*self.by_key.get(&hs.peer_static_public)?;
+				tracing::debug!("handshake init from {from} for peer {idx}");
+				(idx, 1u8)
 			}
 			Ok(Packet::HandshakeResponse(p))=>((p.receiver_idx>>8) as usize, 2),
 			Ok(Packet::PacketCookieReply(p))=>((p.receiver_idx>>8) as usize, 3),
 			Ok(Packet::PacketData(p))=>((p.receiver_idx>>8) as usize, 4),
-			Err(TunnResult::WriteToNetwork(cookie))=>{net_out.push(cookie.to_vec()); return None}
-			Err(_)=>return None,
+			Err(TunnResult::WriteToNetwork(cookie))=>{tracing::debug!("under load, cookie reply to {from}"); net_out.push(cookie.to_vec()); return None}
+			Err(e)=>{tracing::debug!("datagram from {from} failed the mac check: {e:?}"); return None}
 		};
 		if idx>=self.peers.len(){return None}
 		let before=net_out.len();

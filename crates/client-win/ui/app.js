@@ -218,6 +218,10 @@ function boot(){
 		el("logToggle").setAttribute("aria-expanded", String(!on));
 	};
 	el("logClose").onclick=()=>{closePanel(el("logPanel")); el("logToggle").setAttribute("aria-expanded", "false")};
+	el("logCopy").onclick=()=>{
+		const text=[...el("logLines").querySelectorAll(".ln")].map(p=>p.textContent).join("\n");
+		navigator.clipboard.writeText(text).then(()=>{el("logCopy").textContent="Copied"; setTimeout(()=>el("logCopy").textContent="Copy", 1200)}, ()=>{el("logCopy").textContent="Copy failed"});
+	};
 	el("addForm").onsubmit=async ev=>{
 		ev.preventDefault();
 		const name=el("addName").value.trim(), conf=el("addConf").value;
