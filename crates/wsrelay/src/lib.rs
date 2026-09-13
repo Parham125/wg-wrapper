@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::{TcpListener, UdpSocket};
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
@@ -22,6 +22,7 @@ const PING_EVERY:Duration=Duration::from_secs(30);
 const BACKOFF_MIN:Duration=Duration::from_millis(250);
 const BACKOFF_MAX:Duration=Duration::from_secs(8);
 const QUEUE:usize=1024;
+const CONNECT_TIMEOUT:Duration=Duration::from_secs(10);
 /// Concurrent relay connections accepted at once, each of which owns a UDP socket and a 64KB buffer.
 pub const MAX_CONNS:usize=1024;
 
@@ -126,12 +127,19 @@ pub async fn run_client(listen:SocketAddr, url:String, insecure:bool)->anyhow::R
 
 /// Same as [`run_client`] but on an already bound socket, so callers can pick an ephemeral port and know it.
 pub async fn run_client_on(sock:UdpSocket, url:String, insecure:bool)->anyhow::Result<()>{
+	run_client_to(sock, url, insecure, None).await
+}
+
+/// Same as [`run_client_on`] but dialing an already resolved address, for callers whose DNS is
+/// unusable by connect time (the Windows client installs a tunnel NRPT rule before the tunnel is up).
+/// TLS SNI and the HTTP Host header still come from `url`, so only the A/AAAA lookup is skipped.
+pub async fn run_client_to(sock:UdpSocket, url:String, insecure:bool, addr:Option<SocketAddr>)->anyhow::Result<()>{
 	let _=rustls::crypto::ring::default_provider().install_default();
 	let connector=if insecure{
 		Some(Connector::Rustls(Arc::new(rustls::ClientConfig::builder().dangerous().with_custom_certificate_verifier(Arc::new(NoVerify)).with_no_client_auth())))
 	}else{None};
 	let sock=Arc::new(sock);
-	info!(listen=%sock.local_addr()?, %url, insecure, "bridge listening");
+	info!(listen=%sock.local_addr()?, %url, insecure, dial=?addr, "bridge listening");
 	let (mut peers, mut buf)=(HashMap::<SocketAddr, mpsc::Sender<Bytes>>::new(), [0u8; MAX_DATAGRAM]);
 	let mut sweep=tokio::time::interval(Duration::from_secs(60));
 	loop{
@@ -142,7 +150,7 @@ pub async fn run_client_on(sock:UdpSocket, url:String, insecure:bool)->anyhow::R
 					Some(tx)=>tx,
 					None=>{
 						let (tx, rx)=mpsc::channel(QUEUE);
-						tokio::spawn(client_peer(sock.clone(), src, url.clone(), connector.clone(), rx));
+						tokio::spawn(client_peer(sock.clone(), src, url.clone(), connector.clone(), addr, rx));
 						peers.insert(src, tx.clone());
 						tx
 					}
@@ -155,10 +163,23 @@ pub async fn run_client_on(sock:UdpSocket, url:String, insecure:bool)->anyhow::R
 }
 
 /// One local UDP source address mapped onto one WS connection, reconnecting until it goes idle.
-async fn client_peer(sock:Arc<UdpSocket>, peer:SocketAddr, url:String, connector:Option<Connector>, mut rx:mpsc::Receiver<Bytes>){
+async fn client_peer(sock:Arc<UdpSocket>, peer:SocketAddr, url:String, connector:Option<Connector>, addr:Option<SocketAddr>, mut rx:mpsc::Receiver<Bytes>){
 	let (mut backoff, mut deadline)=(BACKOFF_MIN, Instant::now()+IDLE);
 	loop{
-		match tokio_tungstenite::connect_async_tls_with_config(url.as_str(), Some(ws_config()), true, connector.clone()).await{
+		// With an address in hand we dial it ourselves and hand the stream over, so the handshake
+		// request is still built from `url` and keeps the host name in SNI and the Host header.
+		let attempt=match addr{
+			Some(a)=>match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(a)).await{
+				Ok(Ok(stream))=>{
+					let _=stream.set_nodelay(true);
+					tokio_tungstenite::client_async_tls_with_config(url.as_str(), stream, Some(ws_config()), connector.clone()).await.map_err(anyhow::Error::from)
+				}
+				Ok(Err(e))=>Err(anyhow::anyhow!("tcp connect to {a}: {e}")),
+				Err(_)=>Err(anyhow::anyhow!("tcp connect to {a} timed out after {}s", CONNECT_TIMEOUT.as_secs())),
+			},
+			None=>tokio_tungstenite::connect_async_tls_with_config(url.as_str(), Some(ws_config()), true, connector.clone()).await.map_err(anyhow::Error::from),
+		};
+		match attempt{
 			Ok((ws, _))=>{
 				backoff=BACKOFF_MIN;
 				info!(%peer, %url, "ws connected");

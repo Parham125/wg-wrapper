@@ -63,3 +63,17 @@ async fn tls_roundtrip_with_self_signed_cert(){
 	roundtrip(bridge, &payloads()).await;
 	let _=std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn pre_resolved_address_skips_dns(){
+	let target=echo_server().await;
+	let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+	let relay=listener.local_addr().unwrap();
+	tokio::spawn(async move{wsrelay::serve(listener, None, "/wg".to_string(), target).await.unwrap()});
+	let client=UdpSocket::bind("127.0.0.1:0").await.unwrap();
+	let bridge=client.local_addr().unwrap();
+	// The host in the url never resolves, so an echo only comes back if the bridge dialled `relay` itself.
+	let url=format!("ws://does-not-resolve.invalid:{}/wg", relay.port());
+	tokio::spawn(async move{wsrelay::run_client_to(client, url, false, Some(relay)).await.unwrap()});
+	roundtrip(bridge, &payloads()).await;
+}

@@ -86,7 +86,7 @@ async fn dial(app:&AppHandle, conf:&str)->Result<Dialed, String>{
 	let dll=app.path().resolve("resources/wintun.dll", tauri::path::BaseDirectory::Resource).map_err(|e| format!("wintun.dll: {e}"))?;
 	tracing::info!("opening adapter via {}", dll.display());
 	let (adapter, tun)=wgclient::win::open(&cfg, server.ip(), &dll).map_err(|e| format!("adapter: {e}"))?;
-	let tunnel=wgclient::Tunnel::connect(cfg, tun).await.map_err(|e| format!("handshake: {e}"))?;
+	let tunnel=wgclient::Tunnel::connect_to(cfg, tun, server).await.map_err(|e| format!("handshake: {e}"))?;
 	Ok((tunnel, label, adapter))
 }
 

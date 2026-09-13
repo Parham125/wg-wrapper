@@ -1,5 +1,5 @@
 //! Single-peer WireGuard client engine (any OS, sockets only) plus the Windows adapter/route layer.
-//! Transport is either plain UDP or WSS through an in-process `wsrelay::run_client_on` bridge.
+//! Transport is either plain UDP or WSS through an in-process `wsrelay::run_client_to` bridge.
 use anyhow::{anyhow, bail, Context};
 use ipnet::IpNet;
 use std::collections::HashMap;
@@ -118,6 +118,14 @@ pub struct Tunnel{
 impl Tunnel{
 	/// Brings the tunnel up and returns once the first handshake completed (10s timeout).
 	pub async fn connect(cfg:ClientConfig, tun:Box<dyn Tun>)->anyhow::Result<Tunnel>{
+		let endpoint=resolve_endpoint(&cfg).await?;
+		Tunnel::connect_to(cfg, tun, endpoint).await
+	}
+
+	/// Same as [`Tunnel::connect`] but with the endpoint already resolved, so nothing here depends on
+	/// DNS. The Windows client needs this: by the time it dials, its catch-all NRPT rule already points
+	/// at the tunnel's resolver, which is unreachable until the tunnel is up.
+	pub async fn connect_to(cfg:ClientConfig, tun:Box<dyn Tun>, endpoint:SocketAddr)->anyhow::Result<Tunnel>{
 		let mut wg=Wg::new(wgcore::decode_key(&cfg.private_key).context("private key")?);
 		let psk=cfg.preshared_key.as_deref().map(wgcore::decode_key).transpose().context("preshared key")?;
 		wg.add_peer(wgcore::decode_key(&cfg.peer_public_key).context("peer public key")?, psk, cfg.keepalive)?;
@@ -128,10 +136,10 @@ impl Tunnel{
 				let bridge=UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
 				let local=bridge.local_addr()?;
 				let (url, insecure)=(url.clone(), *insecure);
-				tasks.push(tokio::spawn(async move{if let Err(e)=wsrelay::run_client_on(bridge, url, insecure).await{tracing::error!("ws bridge stopped: {e}")}}));
+				tasks.push(tokio::spawn(async move{if let Err(e)=wsrelay::run_client_to(bridge, url, insecure, Some(endpoint)).await{tracing::error!("ws bridge stopped: {e}")}}));
 				local
 			}
-			_=>resolve_endpoint(&cfg).await?,
+			_=>endpoint,
 		};
 		let bind=if peer.is_ipv4(){SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))}else{SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0))};
 		let sock=Arc::new(UdpSocket::bind(bind).await?);
@@ -183,7 +191,8 @@ impl Tunnel{
 				let mut net_out=Vec::new();
 				while let Some(p)=from_tun_rx.recv().await{
 					// IPv6 is blocked on the client for now, so it is black-holed here instead of reaching the server.
-					if p.first().is_some_and(|b| b>>4==6){counters.v6_dropped.fetch_add(1, Ordering::Relaxed); tracing::debug!("dropped an ipv6 packet of {} bytes from the tun", p.len()); continue}
+					// Windows floods a fresh adapter with v6 neighbour discovery, so only the first and every 500th drop is logged.
+					if p.first().is_some_and(|b| b>>4==6){let n=counters.v6_dropped.fetch_add(1, Ordering::Relaxed); if n%500==0{tracing::debug!("dropped an ipv6 packet of {} bytes from the tun ({} so far)", p.len(), n+1)} continue}
 					net_out.clear();
 					wg.lock().unwrap().encapsulate(0, &p, &mut net_out);
 					for d in &net_out{counters.tx.fetch_add(d.len() as u64, Ordering::Relaxed); let _=sock.send(d).await;}
