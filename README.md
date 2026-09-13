@@ -87,6 +87,12 @@ There is no separate killswitch. `AllowedIPs = 0.0.0.0/0` installs default route
 single host route to the relay through the old gateway, so nothing but the relay connection can leave the
 machine while the tunnel is up. Disconnecting drops the adapter, which restores the routes and DNS.
 
+Every name is resolved through the servers in the conf. Windows normally queries all interfaces at once, so
+the client gives the adapter the lowest interface metric, routes each `DNS` address through the tunnel, and
+installs a catch-all Name Resolution Policy Table rule that points every namespace at those servers.
+Disconnecting removes the rule, the routes and the metric, and flushes the resolver cache. If the conf has no
+`DNS` line none of this is applied and name resolution keeps using the physical adapter's resolvers.
+
 Building it needs `wintun.dll`, which is not in the repository:
 
 ```

@@ -273,6 +273,8 @@ pub mod win{
 	const NAME:&str="wg-wrapper";
 	const RING:u32=4*1024*1024;
 	const CREATE_NO_WINDOW:u32=0x0800_0000;
+	/// Drops every NRPT rule we own, both the stale ones a crashed run left behind and our own on the way out.
+	const NRPT_CLEAR:&str="Get-DnsClientNrptRule | Where-Object Comment -eq 'wg-wrapper' | Remove-DnsClientNrptRule -Force";
 
 	fn run(program:&str, args:&[String])->anyhow::Result<String>{
 		tracing::debug!("{program} {}", args.join(" "));
@@ -326,12 +328,28 @@ pub mod win{
 		let (ip, mask)=(cfg.address.addr(), cfg.address.netmask());
 		run("netsh", &argv(&["interface", "ipv4", "set", "address", &format!("name={name}"), "static", &ip.to_string(), &mask.to_string()]))?;
 		run("netsh", &argv(&["interface", "ipv4", "set", "subinterface", &format!("interface={name}"), &format!("mtu={}", cfg.mtu), "store=persistent"]))?;
+		// Smart multi-homed name resolution queries every interface at once, so setting the adapter's servers is
+		// not enough: the tunnel also has to win on metric and hold a catch-all NRPT rule for every name.
 		if let Some((first, rest))=cfg.dns.split_first(){
 			run("netsh", &argv(&["interface", "ipv4", "set", "dnsservers", &format!("name={name}"), "static", &first.to_string(), "primary", "no"]))?;
 			for (i, d) in rest.iter().enumerate(){
 				run("netsh", &argv(&["interface", "ipv4", "add", "dnsservers", &format!("name={name}"), &d.to_string(), &format!("index={}", i+2), "validate=no"]))?;
 			}
+			for (family, af) in [("ipv4", "IPv4"), ("ipv6", "IPv6")]{
+				run("netsh", &argv(&["interface", family, "set", "interface", &name, "metric=1"]))?;
+				// An explicit metric turns the automatic one off, so the undo has to turn it back on.
+				dev.undo.push(argv(&["powershell", "-NoProfile", "-NonInteractive", "-Command", &format!("Set-NetIPInterface -InterfaceAlias '{name}' -AddressFamily {af} -AutomaticMetric Enabled")]));
+			}
+			let servers=cfg.dns.iter().filter(|d| d.is_ipv4()).map(|d| d.to_string()).collect::<Vec<_>>();
+			if !servers.is_empty(){
+				let _=run("powershell", &argv(&["-NoProfile", "-NonInteractive", "-Command", NRPT_CLEAR]));
+				run("powershell", &argv(&["-NoProfile", "-NonInteractive", "-Command", &format!("Add-DnsClientNrptRule -Namespace '.' -NameServers {} -Comment '{NAME}'", servers.join(","))]))?;
+				dev.undo.push(argv(&["powershell", "-NoProfile", "-NonInteractive", "-Command", NRPT_CLEAR]));
+			}
+			run("ipconfig", &argv(&["/flushdns"]))?;
 			dev.dns=true;
+		}else{
+			tracing::warn!("the conf carries no DNS servers, so names keep resolving through the physical adapter and will leak");
 		}
 		// Pin the server to the real default gateway first, so the tunnel routes below cannot swallow it.
 		let mut best:Option<(u32, Ipv4Addr)>=None;
@@ -366,6 +384,21 @@ pub mod win{
 				}
 			}
 		}
+		// Each server also gets its own route, so DNS never rides on whatever allowed_ips happened to cover.
+		for d in &cfg.dns{
+			match d{
+				IpAddr::V4(a)=>{
+					let route=argv(&[&a.to_string(), "mask", "255.255.255.255", &ip.to_string()]);
+					run("route", &[argv(&["add"]), route.clone(), argv(&["metric", "1", "if", &index.to_string()])].concat())?;
+					dev.undo.push([argv(&["route", "delete"]), route].concat());
+				}
+				IpAddr::V6(a)=>{
+					let route=argv(&[&format!("{a}/128"), &format!("interface={index}")]);
+					run("netsh", &[argv(&["interface", "ipv6", "add", "route"]), route.clone()].concat())?;
+					dev.undo.push([argv(&["netsh", "interface", "ipv6", "delete", "route"]), route].concat());
+				}
+			}
+		}
 		Ok((dev, Box::new(Device(session))))
 	}
 
@@ -375,6 +408,7 @@ pub mod win{
 			if self.dns{
 				let reset=argv(&["interface", "ipv4", "set", "dnsservers", &format!("name={}", self.name), "dhcp"]);
 				if let Err(e)=run("netsh", &reset){tracing::debug!("dns reset failed: {e}")}
+				if let Err(e)=run("ipconfig", &argv(&["/flushdns"])){tracing::debug!("dns flush failed: {e}")}
 			}
 			// Unblocks whichever thread is parked in `Device::recv` so the engine's read thread can exit.
 			if let Err(e)=self.session.shutdown(){tracing::debug!("session shutdown failed: {e}")}
