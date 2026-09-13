@@ -39,6 +39,7 @@ pub async fn start(cfg:Config)->anyhow::Result<Running>{
 	let wg_net=cfg.address;
 	let allow_private=cfg.allow_private;
 	let mtu=cfg.mtu();
+	let udp_idle=cfg.udp_idle();
 	let mut wg=Wg::new(wgcore::decode_key(&cfg.private_key)?);
 	let mut allowed:Vec<(IpNet, usize)>=Vec::new();
 	let mut upstreams:Vec<Upstream>=Vec::new();
@@ -153,7 +154,7 @@ pub async fn start(cfg:Config)->anyhow::Result<Running>{
 				let (guard, up)=(FlowGuard{counts:counts.clone(), idx, _permit:permit}, upstreams[idx].clone());
 				match stream{
 					IpStackStream::Tcp(s)=>{tokio::spawn(async move{let _guard=guard; flow::handle_tcp(s, up).await});}
-					IpStackStream::Udp(s)=>{tokio::spawn(async move{let _guard=guard; flow::handle_udp(s, up, dns, mtu).await});}
+					IpStackStream::Udp(s)=>{tokio::spawn(async move{let _guard=guard; flow::handle_udp(s, up, dns, mtu, udp_idle).await});}
 					_=>tracing::debug!("ignoring non tcp/udp flow from {src}"),
 				}
 			}
