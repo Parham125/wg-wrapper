@@ -10,6 +10,7 @@ use tokio_socks::tcp::Socks5Stream;
 
 const DIAL_TIMEOUT:Duration=Duration::from_secs(10);
 const DNS_TIMEOUT:Duration=Duration::from_secs(5);
+const DNS_IDLE:Duration=Duration::from_secs(10);
 const ASSOCIATE_TIMEOUT:Duration=Duration::from_secs(10);
 const MAX_DATAGRAM:usize=65535;
 /// An ipv4 header plus a udp header, the overhead ipstack silently clips a datagram against.
@@ -107,23 +108,29 @@ pub async fn handle_tcp(mut stream:IpStackTcpStream, up:Upstream){
 	if let Err(e)=tokio::io::copy_bidirectional(&mut stream, &mut remote).await{tracing::debug!("tcp {dst}: {e}")}
 }
 
-/// DNS goes over TCP so it can ride a plain CONNECT; everything else gets a UDP ASSOCIATE.
+/// Every UDP flow, port 53 included, gets a UDP ASSOCIATE: some apps speak their own protocol on 53 to hosts that
+/// never answer DNS over TCP. DNS over TCP is only the fallback for upstreams without UDP, or the path to a forced resolver.
 pub async fn handle_udp(stream:IpStackUdpStream, up:Upstream, dns:Option<SocketAddr>, mtu:u16, idle:Duration){
 	let dst=stream.peer_addr();
-	if dst.port()==53{dns_over_tcp(stream, up, dns.unwrap_or(dst), mtu).await}else{udp_relay(stream, up, dst, mtu, idle).await}
+	if let (53, Some(forced))=(dst.port(), dns){return dns_over_tcp(stream, up, forced, mtu).await}
+	// A lookup is one round trip, so a port 53 flow must not pin an association and its control connection for long.
+	let idle=if dst.port()==53{idle.min(DNS_IDLE)}else{idle};
+	if let Some(stream)=udp_relay(stream, up.clone(), dst, mtu, idle).await{if dst.port()==53{dns_over_tcp(stream, up, dst, mtu).await}}
 }
 
-/// Peer datagrams wrapped in the SOCKS5 UDP header and pumped against the relay the proxy handed us.
-async fn udp_relay(mut stream:IpStackUdpStream, up:Upstream, dst:SocketAddr, mtu:u16, idle:Duration){
+/// Peer datagrams wrapped in the SOCKS5 UDP header and pumped against the relay the proxy handed us. Hands the stream
+/// back when no association could be made, so the caller can fall back.
+async fn udp_relay(mut stream:IpStackUdpStream, up:Upstream, dst:SocketAddr, mtu:u16, idle:Duration)->Option<IpStackUdpStream>{
+	if NO_UDP.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()).contains(&up.addr){return Some(stream)}
 	let (mut control, relay)=match tokio::time::timeout(ASSOCIATE_TIMEOUT, associate(&up)).await{
 		Ok(Ok(v))=>v,
 		Ok(Err(e))=>{
 			if NO_UDP.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()).insert(up.addr.clone()){
-				tracing::warn!("upstream {} cannot relay udp, dropping non dns udp flows through it: {e}", up.addr);
+				tracing::warn!("upstream {} cannot relay udp, dns falls back to tcp and other udp is dropped: {e}", up.addr);
 			}else{tracing::debug!("udp {dst}: associate failed: {e}")}
-			return;
+			return Some(stream);
 		}
-		Err(_)=>{tracing::debug!("udp {dst}: associate timed out"); return}
+		Err(_)=>{tracing::debug!("udp {dst}: associate timed out"); return Some(stream)}
 	};
 	tracing::debug!("udp {} -> {dst} associated via {}", stream.local_addr(), up.addr);
 	let (header, cap)=(udp_header(dst), (mtu as usize).saturating_sub(UDP_OVERHEAD));
@@ -132,22 +139,22 @@ async fn udp_relay(mut stream:IpStackUdpStream, up:Upstream, dst:SocketAddr, mtu
 	loop{
 		tokio::select!{
 			r=stream.read(&mut from_peer)=>{
-				let Ok(n)=r else{return};
-				if n==0{return}
+				let Ok(n)=r else{return None};
+				if n==0{return None}
 				wrapped.clear();
 				wrapped.extend_from_slice(&header);
 				wrapped.extend_from_slice(&from_peer[..n]);
-				if let Err(e)=relay.send(&wrapped).await{tracing::debug!("udp {dst}: relay send: {e}"); return}
+				if let Err(e)=relay.send(&wrapped).await{tracing::debug!("udp {dst}: relay send: {e}"); return None}
 			}
 			r=relay.recv(&mut from_relay)=>{
-				let Ok(n)=r else{return};
+				let Ok(n)=r else{return None};
 				let Some(payload)=unwrap_udp(&from_relay[..n], dst) else{continue};
 				if payload.len()>cap{tracing::debug!("udp {dst}: dropping a {} byte reply, over the {cap} byte mtu", payload.len()); continue}
-				if stream.write(payload).await.is_err(){return}
+				if stream.write(payload).await.is_err(){return None}
 			}
 			// The association dies with its control connection, so anything on it ends the flow.
-			_=control.read(&mut sink)=>{tracing::debug!("udp {dst}: upstream closed the association"); return}
-			_=tokio::time::sleep(idle)=>{tracing::debug!("udp {dst}: idle for {idle:?}"); return}
+			_=control.read(&mut sink)=>{tracing::debug!("udp {dst}: upstream closed the association"); return None}
+			_=tokio::time::sleep(idle)=>{tracing::debug!("udp {dst}: idle for {idle:?}"); return None}
 		}
 	}
 }

@@ -84,8 +84,8 @@ Install `wg-wrapper_<version>_x64-setup.exe` from the release, paste a `.conf` w
 | Peer sends | Server does |
 |---|---|
 | TCP to a public address | SOCKS5 `CONNECT`, bidirectional copy |
-| UDP to port 53 | DNS over TCP through the proxy, `TC` bit set if the answer would not fit |
-| Any other UDP | SOCKS5 `UDP ASSOCIATE`, one association per flow |
+| Any UDP, port 53 included | SOCKS5 `UDP ASSOCIATE`, one association per flow |
+| UDP to port 53 when the proxy has no UDP, or `dns` is set | DNS over TCP through the proxy, `TC` bit set if the answer would not fit |
 | Anything to the tunnel subnet, gateway, loopback, link-local, multicast, broadcast | TCP gets an `RST`, the rest is dropped |
 | Anything to 10/8, 172.16/12, 192.168/16, 100.64/10, 192.0.0/24, 198.18/15, 240/4, fc00::/7 | Same, unless `allow_private` |
 | A packet whose source is not in that peer's `allowed_ips` | Dropped before it reaches the stack |

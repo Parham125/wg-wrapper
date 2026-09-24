@@ -389,6 +389,42 @@ async fn dns_is_forwarded_over_tcp_through_the_socks5(){
 	assert_eq!(seen.lock().unwrap().as_slice(), ["1.1.1.1:53"], "dns override was not used");
 }
 
+/// Without a forced resolver, port 53 is plain udp through an association, so apps that speak their own protocol on 53
+/// still reach hosts that never answer dns over tcp.
+#[tokio::test(flavor="multi_thread", worker_threads=4)]
+async fn port_53_rides_an_association_without_an_override(){
+	let (backend, _)=tcp_responder().await;
+	let (echo, hits)=udp_responder().await;
+	let (proxy, seen)=socks5_proxy(dns_responder().await, backend, echo, false).await;
+	let wgw=spawn_server(&format!("socks5://{proxy}"), None).await;
+	let mut client=Client::connect(wgw.keys[0], wgw.public, wgw.addr).await;
+	client.send_ip(&ip_udp(PEER_A, [54, 194, 213, 130], 40020, 53, b"custom")).await;
+	let reply=client.recv_ip(Duration::from_secs(5)).await.expect("no reply on port 53");
+	let PayloadSlice::Udp(payload)=PacketHeaders::from_ip_slice(&reply).unwrap().payload else{panic!("not udp")};
+	assert_eq!(payload, b"echo:custom");
+	assert_eq!(hits.load(Ordering::SeqCst), 1);
+	let seen=seen.lock().unwrap().clone();
+	assert!(seen.contains(&"udp 54.194.213.130:53".to_string()), "port 53 did not go through the association: {seen:?}");
+	assert!(!seen.contains(&"54.194.213.130:53".to_string()), "port 53 still went over tcp: {seen:?}");
+}
+
+/// A proxy without udp still resolves: port 53 falls back to dns over tcp to the address the peer asked for.
+#[tokio::test(flavor="multi_thread", worker_threads=4)]
+async fn port_53_falls_back_to_tcp_when_the_proxy_refuses_udp(){
+	let (backend, _)=tcp_responder().await;
+	let (echo, _)=udp_responder().await;
+	let (proxy, seen)=socks5_proxy(dns_responder().await, backend, echo, true).await;
+	let wgw=spawn_server(&format!("socks5://{proxy}"), None).await;
+	let mut client=Client::connect(wgw.keys[0], wgw.public, wgw.addr).await;
+	client.send_ip(&ip_udp(PEER_A, [9, 9, 9, 9], 40021, 53, b"\x12\x34\x01\x00fake-query")).await;
+	let reply=client.recv_ip(Duration::from_secs(5)).await.expect("no dns reply after the fallback");
+	let PayloadSlice::Udp(payload)=PacketHeaders::from_ip_slice(&reply).unwrap().payload else{panic!("not udp")};
+	assert_eq!(payload, DNS_ANSWER);
+	let seen=seen.lock().unwrap().clone();
+	assert!(seen.contains(&"associate 0.0.0.0:0".to_string()), "udp was not tried first: {seen:?}");
+	assert!(seen.contains(&"9.9.9.9:53".to_string()), "no tcp fallback to the asked resolver: {seen:?}");
+}
+
 /// Non dns udp rides a real SOCKS5 UDP ASSOCIATE: the peer gets its echo back and the proxy saw both
 /// the association and the wrapped destination.
 #[tokio::test(flavor="multi_thread", worker_threads=4)]
