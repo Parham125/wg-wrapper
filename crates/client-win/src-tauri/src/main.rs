@@ -262,6 +262,13 @@ fn main(){
 		.invoke_handler(tauri::generate_handler![connect, disconnect, status, log_history, list_profiles, save_profile, delete_profile, check_update, install_update, get_settings, set_settings])
 		.setup(|app|{
 			let _=HANDLE.set(app.handle().clone());
+			// Shrinks the default 640px height onto short laptop screens; the work area already excludes the taskbar. Any failure keeps the default.
+			if let Some(w)=app.get_webview_window("main"){
+				if let (Ok(Some(m)), Ok(outer), Ok(inner))=(w.current_monitor(), w.outer_size(), w.inner_size()){
+					let fit=m.work_area().size.height.saturating_sub(outer.height-inner.height).max((420.0*m.scale_factor()) as u32);
+					if outer.height>m.work_area().size.height&&fit<inner.height{let _=w.set_size(tauri::PhysicalSize::new(inner.width, fit)); let _=w.center();}
+				}
+			}
 			#[cfg(desktop)]
 			app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
 			tracing::info!("client ready");

@@ -14,10 +14,12 @@
         "title": "wg-wrapper",
         "width": 420,
         "height": 640,
-        "resizable": false,
+        "minWidth": 360,
+        "minHeight": 420,
+        "resizable": true,
         "maximizable": false,
         "center": true,
-        "backgroundColor": "#0F1A1E"
+        "backgroundColor": "#ECEFED"
       }
     ],
     "security": {

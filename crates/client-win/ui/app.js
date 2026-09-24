@@ -1,5 +1,5 @@
 "use strict";
-const TICKS=60, BAR=126, BASE=16, WORDS={disconnected:"Disconnected", connecting:"Connecting", connected:"Connected", error:"Failed"};
+const TICKS=60, WORDS={disconnected:"Disconnected", connecting:"Connecting", connected:"Connected", error:"Failed"};
 const el=id=>document.getElementById(id);
 const api=()=>window.__TAURI__;
 const invoke=(cmd, args)=>api().core.invoke(cmd, args);
@@ -43,16 +43,16 @@ function drawTicks(live){
 	const max=Math.max(1, ...hist.map(h=>h.rate));
 	let top=0;
 	for(let i=0; i<TICKS; i++){
-		const h=hist[i], t=tickEls[i], px=h.rate>0?Math.max(2, Math.round(Math.pow(h.rate/max, 0.55)*BAR)):0;
-		t.style.height=px+"px";
+		const h=hist[i], t=tickEls[i], pc=h.rate>0?Math.max(2, Math.pow(h.rate/max, 0.55)*100):0;
+		t.style.height=pc+"%";
 		t.classList.toggle("on", live&&h.rate>0);
 		t.classList.toggle("hs", h.hs);
-		if(px>top){top=px}
+		if(pc>top){top=pc}
 	}
 	const marker=el("peak"), show=live&&max>1;
 	marker.hidden=!show;
 	if(show){
-		marker.style.bottom=(BASE+top)+"px";
+		marker.style.bottom=top+"%";
 		el("peakLabel").textContent="peak "+fmtBytes(max)+"/s";
 	}
 }
@@ -73,11 +73,13 @@ function paint(s){
 	const sub=el("stateSub"), empty=profiles.length===0;
 	el("stage").dataset.empty=empty?"1":"0";
 	el("stage").dataset.state=st;
+	document.body.dataset.state=st;
+	document.body.dataset.empty=empty?"1":"0";
 	sub.className="state-sub";
 	if(empty){
-		el("stateWord").textContent="No profiles";
+		el("stateWord").textContent="No profiles yet";
 		sub.className="state-sub lead";
-		sub.textContent="Paste a WireGuard config to add one. It needs an Endpoint line like this:";
+		sub.textContent="Add the WireGuard config your relay gave you. It needs an Endpoint line like this one:";
 	}else if(st==="connected"){sub.textContent=s.endpoint||"connected"}
 	else if(st==="connecting"){sub.textContent="reaching "+(current?endpointOf(current.conf):"the relay")}
 	else{sub.textContent=current?endpointOf(current.conf):"Choose a profile to begin"}
@@ -87,7 +89,7 @@ function paint(s){
 	el("hs").textContent=stats?fmtAgo(stats.last_handshake_secs_ago):"none yet";
 	el("uptime").textContent=fmtDur(stats?stats.connected_secs:0);
 	const peak=Math.max(0, ...hist.map(h=>h.rate)), shook=hist.some(h=>h.hs);
-	el("caption").textContent=empty?"":live?(peak>0?(shook?"last 60 seconds, notches mark handshakes":"last 60 seconds"):"tunnel is up, nothing moving yet"):st==="connecting"?"waiting for the first handshake":"traffic appears here once the tunnel is up";
+	el("caption").textContent=empty?"":live?(peak>0?(shook?"Traffic, last 60 seconds. Notches mark handshakes.":"Traffic, last 60 seconds"):"Tunnel is up, nothing moving yet"):st==="connecting"?"Waiting for the first handshake":"Traffic shows here once the tunnel is up";
 	drawTicks(live);
 	const btn=el("action");
 	btn.textContent=empty?"Add profile":live?"Disconnect":st==="connecting"?"Connecting":"Connect";
@@ -270,7 +272,7 @@ function boot(){
 	for(let i=0; i<TICKS; i++){
 		const d=document.createElement("div");
 		d.className="tick";
-		d.style.height="0px";
+		d.style.height="0";
 		track.append(d);
 		tickEls.push(d);
 	}

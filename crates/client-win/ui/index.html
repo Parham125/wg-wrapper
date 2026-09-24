@@ -8,6 +8,13 @@
 </head>
 <body>
 <div class="shell">
+	<div class="banner" id="banner" hidden>
+		<p class="banner-text" id="bannerText"></p>
+		<div class="banner-acts">
+			<button class="ghost" id="bannerInstall" type="button">Install</button>
+			<button class="ghost" id="bannerLater" type="button">Later</button>
+		</div>
+	</div>
 	<header class="topbar">
 		<button class="picker" id="picker" type="button" aria-haspopup="dialog">
 			<span class="picker-name" id="profileName">No profile</span>
@@ -18,41 +25,30 @@
 			<button class="ghost" id="logToggle" type="button" aria-expanded="false" aria-controls="logPanel">Log</button>
 		</div>
 	</header>
-	<div class="statusline" id="statusline" data-state="disconnected"></div>
-	<div class="banner" id="banner" hidden>
-		<p class="banner-text" id="bannerText"></p>
-		<div class="banner-acts">
-			<button class="ghost" id="bannerInstall" type="button">Install</button>
-			<button class="ghost" id="bannerLater" type="button">Later</button>
-		</div>
-	</div>
 	<main class="stage" id="stage" data-state="disconnected">
-		<div class="state">
+		<div class="hero state">
 			<div class="state-head">
 				<h1 class="state-word" id="stateWord">Disconnected</h1>
-				<span class="lamp" aria-hidden="true"></span>
+				<p class="clock" id="uptime">0:00</p>
 			</div>
 			<p class="state-sub" id="stateSub">Choose a profile to begin</p>
 			<p class="example">Endpoint = wss://relay.example.com/wg</p>
+			<div class="statusline" id="statusline" data-state="disconnected"></div>
 		</div>
-		<div class="pulse">
-			<div class="scope">
-				<div class="track" id="track" role="img" aria-label="Traffic over the last minute"></div>
-				<div class="peak" id="peak" hidden><span class="peak-label" id="peakLabel"></span></div>
-			</div>
-			<p class="caption" id="caption"></p>
+		<p class="caption" id="caption"></p>
+		<div class="scope">
+			<div class="track" id="track" role="img" aria-label="Traffic over the last minute"><div class="peak" id="peak" hidden><span class="peak-label" id="peakLabel"></span></div></div>
 		</div>
 		<dl class="readout">
-			<div class="cell lead-cell"><dt>Down</dt><dd class="big"><span id="rx">0</span><span class="unit" id="rxUnit">B</span></dd></div>
-			<div class="cell lead-cell"><dt>Up</dt><dd class="big"><span id="tx">0</span><span class="unit" id="txUnit">B</span></dd></div>
+			<div class="cell"><dt>Down</dt><dd class="big"><span id="rx">0</span><span class="unit" id="rxUnit">B</span></dd></div>
+			<div class="cell"><dt>Up</dt><dd class="big"><span id="tx">0</span><span class="unit" id="txUnit">B</span></dd></div>
 			<div class="cell"><dt>Last handshake</dt><dd id="hs">none yet</dd></div>
-			<div class="cell"><dt>Uptime</dt><dd id="uptime">0:00</dd></div>
 		</dl>
-		<div class="act">
-			<p class="notice" id="notice" role="status" hidden></p>
-			<button class="action" id="action" type="button">Connect</button>
-		</div>
 	</main>
+	<footer class="act">
+		<p class="notice" id="notice" role="status" hidden></p>
+		<button class="action" id="action" type="button">Connect</button>
+	</footer>
 	<section class="drawer" id="logPanel" aria-label="Log" hidden>
 		<div class="drawer-head">
 			<h2>Log</h2>
