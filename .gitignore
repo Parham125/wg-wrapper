@@ -3,3 +3,4 @@ target/
 config.json
 crates/client-win/src-tauri/resources/wintun.dll
 crates/client-win/src-tauri/gen/
+.DS_Store
