@@ -19,7 +19,8 @@
         "resizable": true,
         "maximizable": false,
         "center": true,
-        "backgroundColor": "#ECEFED"
+        "theme": "Dark",
+        "backgroundColor": "#111C21"
       }
     ],
     "security": {

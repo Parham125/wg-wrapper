@@ -76,9 +76,11 @@ struct Profile{name:String, conf:String}
 struct UpdateInfo{available:bool, version:String, notes:String, current:String}
 
 #[derive(Serialize, Deserialize)]
-struct Settings{auto_update:bool}
+struct Settings{auto_update:bool, #[serde(default="dark")] theme:String}
 
-impl Default for Settings{fn default()->Self{Settings{auto_update:true}}}
+impl Default for Settings{fn default()->Self{Settings{auto_update:true, theme:dark()}}}
+
+fn dark()->String{"dark".to_string()}
 
 #[cfg(windows)]
 type Dialed=(wgclient::Tunnel, String, wgclient::win::Adapter);
@@ -241,16 +243,29 @@ fn settings_path(app:&AppHandle)->Result<PathBuf, String>{
 	Ok(dir.join("settings.json"))
 }
 
-#[tauri::command]
-async fn get_settings(app:AppHandle)->Result<Settings, String>{
-	let path=settings_path(&app)?;
+fn load_settings(app:&AppHandle)->Result<Settings, String>{
+	let path=settings_path(app)?;
 	Ok(std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default())
 }
+
+/// Title bar and the native fill behind the webview follow the UI theme, so resizing never shows the other theme's colour. The fills match --ground in app.css.
+fn apply_theme(app:&AppHandle, theme:&str){
+	let light=theme=="light";
+	if let Some(w)=app.get_webview_window("main"){
+		let _=w.set_theme(Some(if light{tauri::Theme::Light}else{tauri::Theme::Dark}));
+		let _=w.set_background_color(Some(if light{tauri::window::Color(236, 239, 237, 255)}else{tauri::window::Color(17, 28, 33, 255)}));
+	}
+}
+
+#[tauri::command]
+async fn get_settings(app:AppHandle)->Result<Settings, String>{load_settings(&app)}
 
 #[tauri::command]
 async fn set_settings(app:AppHandle, settings:Settings)->Result<(), String>{
 	let body=serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
-	std::fs::write(settings_path(&app)?, body).map_err(|e| e.to_string())
+	std::fs::write(settings_path(&app)?, body).map_err(|e| e.to_string())?;
+	apply_theme(&app, &settings.theme);
+	Ok(())
 }
 
 fn main(){
@@ -262,6 +277,8 @@ fn main(){
 		.invoke_handler(tauri::generate_handler![connect, disconnect, status, log_history, list_profiles, save_profile, delete_profile, check_update, install_update, get_settings, set_settings])
 		.setup(|app|{
 			let _=HANDLE.set(app.handle().clone());
+			// tauri.conf.json starts the window dark; only a saved light theme needs correcting here.
+			if let Ok(s)=load_settings(app.handle()){if s.theme=="light"{apply_theme(app.handle(), "light")}}
 			// Shrinks the default 640px height onto short laptop screens; the work area already excludes the taskbar. Any failure keeps the default.
 			if let Some(w)=app.get_webview_window("main"){
 				if let (Ok(Some(m)), Ok(outer), Ok(inner))=(w.current_monitor(), w.outer_size(), w.inner_size()){

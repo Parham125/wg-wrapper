@@ -6,7 +6,7 @@
 	let store=scene==="empty"?[]:[{name:"Frankfurt relay", conf:CONF(2)}, {name:"Home lab", conf:CONF(3)}, {name:"Amsterdam backup", conf:CONF(4)}];
 	let state=scene==="connected"||scene==="log"?"connected":scene==="error"?"error":scene==="connecting"?"connecting":"disconnected";
 	let error=scene==="error"?"Windows only":null, clock=0, rx=0, tx=0, subs={};
-	let settings={auto_update:q.get("auto")!=="0"};
+	let settings={auto_update:q.get("auto")!=="0", theme:q.get("theme")==="light"?"light":"dark"};
 	const HAS=q.get("update")==="1";
 	const RELEASE={available:HAS, version:HAS?"0.1.7":"0.1.6", notes:HAS?"Keeps the tunnel up when the relay drops a handshake.\nProbes the path MTU on connect instead of guessing 1380.\nRemembers the last profile after an update.":"", current:"0.1.6"};
 	const emit=(ev, payload)=>(subs[ev]||[]).forEach(f=>f({payload}));
@@ -39,8 +39,8 @@
 				lines.slice(2).forEach(l=>emit("log", l));
 				return null;
 			}
-			if(cmd==="get_settings"){return {auto_update:settings.auto_update}}
-			if(cmd==="set_settings"){settings=args.settings; return null}
+			if(cmd==="get_settings"){return {...settings}}
+			if(cmd==="set_settings"){settings={...args.settings}; return null}
 			if(cmd==="check_update"){
 				await new Promise(r=>setTimeout(r, 550));
 				if(q.get("checkfail")==="1"){throw "No route to the update server. Check the connection and try again."}

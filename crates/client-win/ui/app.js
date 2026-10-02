@@ -6,7 +6,7 @@ const invoke=(cmd, args)=>api().core.invoke(cmd, args);
 const hist=Array.from({length:TICKS}, ()=>({rate:0, hs:false}));
 const tickEls=[];
 let profiles=[], current=null, timer=null, prev=null, busy=false, last={state:"disconnected"};
-let release=null, upError=null, checking=false, installing=false, checked=false, dismissed=false;
+let release=null, upError=null, checking=false, installing=false, checked=false, dismissed=false, settings={auto_update:true, theme:"dark"};
 
 function fmtBytes(n){
 	if(n<1024){return n+" B"}
@@ -254,6 +254,12 @@ function setAuto(on){
 	el("autoUpdate").dataset.on=on?"1":"0";
 	el("autoUpdate").setAttribute("aria-checked", String(on));
 }
+// The localStorage copy is only there so theme.js can pick the theme before the settings file has been read.
+function setTheme(t){
+	document.documentElement.dataset.theme=t;
+	try{localStorage.setItem("theme", t)}catch(e){}
+	for(const b of el("theme").children){b.setAttribute("aria-pressed", String(b.dataset.value===t))}
+}
 
 function addLine(text){
 	const body=el("logLines");
@@ -296,7 +302,15 @@ function boot(){
 	el("autoUpdate").onclick=()=>{
 		const on=el("autoUpdate").dataset.on!=="1";
 		setAuto(on);
-		invoke("set_settings", {settings:{auto_update:on}}).catch(e=>{setAuto(!on); upError=explain(e); paintUpdate()});
+		settings.auto_update=on;
+		invoke("set_settings", {settings}).catch(e=>{settings.auto_update=!on; setAuto(!on); upError=explain(e); paintUpdate()});
+	};
+	el("theme").onclick=ev=>{
+		const b=ev.target.closest("button"), old=settings.theme;
+		if(!b||b.dataset.value===old){return}
+		settings.theme=b.dataset.value;
+		setTheme(settings.theme);
+		invoke("set_settings", {settings}).catch(e=>{settings.theme=old; setTheme(old); upError=explain(e); paintUpdate()});
 	};
 	el("logCopy").onclick=()=>{
 		const text=[...el("logLines").querySelectorAll(".ln")].map(p=>p.textContent).join("\n");
@@ -337,7 +351,7 @@ function boot(){
 		el("barFill").style.width=total?Math.min(100, Math.round(p.downloaded/total*100))+"%":"100%";
 		el("progressLine").textContent=b?"Downloading "+(a[1]===b[1]?a[0]:a.join(" "))+" of "+b.join(" "):"Downloading "+a.join(" ");
 	});
-	invoke("get_settings").then(s=>{setAuto(!!s.auto_update); if(s.auto_update){runCheck()}}).catch(()=>{});
+	invoke("get_settings").then(s=>{settings={auto_update:!!s.auto_update, theme:s.theme==="light"?"light":"dark"}; setAuto(settings.auto_update); setTheme(settings.theme); if(settings.auto_update){runCheck()}}).catch(()=>{});
 	invoke("log_history").then(lines=>lines.forEach(addLine)).catch(()=>{});
 	loadProfiles().then(poll).catch(e=>{
 		el("notice").textContent=explain(e);

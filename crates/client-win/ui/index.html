@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>wg-wrapper</title>
 <link rel="stylesheet" href="app.css">
+<script src="theme.js"></script>
 </head>
 <body>
 <div class="shell">
@@ -92,6 +93,13 @@
 			<button class="ghost" id="settingsClose" type="button">Close</button>
 		</div>
 		<div class="sheet-body">
+			<div class="setting mid">
+				<p class="setting-name">Theme</p>
+				<div class="seg" id="theme" role="group" aria-label="Theme">
+					<button type="button" data-value="dark" aria-pressed="true">Dark</button>
+					<button type="button" data-value="light" aria-pressed="false">Light</button>
+				</div>
+			</div>
 			<div class="setting">
 				<div class="setting-main">
 					<p class="setting-name">Check for updates on launch</p>
