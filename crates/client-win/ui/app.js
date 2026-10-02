@@ -172,7 +172,12 @@ function renderProfiles(){
 			if(current&&current.name===p.name){select(null)}
 			await loadProfiles();
 		};
-		li.append(main, act);
+		const edit=document.createElement("button");
+		edit.type="button";
+		edit.className="pitem-act edit";
+		edit.textContent="Edit";
+		edit.onclick=()=>{el("addError").hidden=true; el("addTitle").textContent="Edit profile"; el("addName").value=p.name; el("addConf").value=p.conf; openPanel(el("addForm")); el("addConf").focus()};
+		li.append(main, edit, act);
 		list.append(li);
 	}
 }
@@ -285,7 +290,7 @@ function boot(){
 	el("action").onclick=onAction;
 	el("picker").onclick=()=>{el("sheet").dataset.open==="1"?closeSheet():openPanel(el("sheet"))};
 	el("sheetClose").onclick=closeSheet;
-	el("addOpen").onclick=()=>{el("addError").hidden=true; openPanel(el("addForm")); el("addName").focus()};
+	el("addOpen").onclick=()=>{el("addError").hidden=true; el("addTitle").textContent="New profile"; el("addName").value=""; el("addConf").value=""; openPanel(el("addForm")); el("addName").focus()};
 	el("addCancel").onclick=()=>closePanel(el("addForm"));
 	el("logToggle").onclick=()=>{
 		const d=el("logPanel"), on=d.dataset.open==="1";

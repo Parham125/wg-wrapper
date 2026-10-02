@@ -190,6 +190,7 @@ body[data-banner="1"] .drawer{max-height:calc(100% - var(--head) - var(--bh))}
 .pitem-act{flex:0 0 auto;padding:4px 8px;background:none;border:1px solid transparent;border-radius:var(--r);color:var(--faint);font-size:12px;cursor:pointer;transition:color .12s ease, border-color .12s ease}
 .pitem:hover .pitem-act{color:var(--steel)}
 .pitem-act:hover{color:var(--bad);border-color:var(--rule)}
+.pitem-act.edit:hover{color:var(--ink)}
 .pitem-act.confirm{color:var(--bad);border-color:var(--bad)}
 .blank-block{padding:24px 0 0}
 .blank-title{font:600 16px var(--ui)}
