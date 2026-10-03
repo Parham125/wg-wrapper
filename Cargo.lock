@@ -658,8 +658,6 @@ dependencies = [
 [[package]]
 name = "ipstack"
 version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e889a45c1ce3e97268ad2249951528563ec1d02a120fecbd4db690beac34f7fd"
 dependencies = [
  "ahash",
  "etherparse",
@@ -1128,7 +1126,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "boringtun",
@@ -1545,7 +1543,7 @@ dependencies = [
 
 [[package]]
 name = "wgclient"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "etherparse",
@@ -1562,7 +1560,7 @@ dependencies = [
 
 [[package]]
 name = "wgcore"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1673,7 +1671,7 @@ dependencies = [
 
 [[package]]
 name = "wsrelay"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "clap",

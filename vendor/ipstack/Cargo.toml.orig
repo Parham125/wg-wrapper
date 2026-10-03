@@ -1,0 +1,64 @@
+[package]
+authors = ['Narrowlink <opensource@narrowlink.com>']
+description = 'Asynchronous lightweight userspace implementation of TCP/IP stack for Tun device'
+name = "ipstack"
+version = "1.0.1"
+edition = "2024"
+license = "Apache-2.0"
+repository = 'https://github.com/narrowlink/ipstack'
+homepage = 'https://narrowlink.com'
+readme = "README.md"
+
+[dependencies]
+ahash = { version = "0.8", default-features = false, features = ["std"] }
+etherparse = { version = "0.20", default-features = false, features = ["std"] }
+log = { version = "0.4", default-features = false }
+rand = { version = "0.10", default-features = false, features = ["thread_rng"] }
+thiserror = { version = "2.0", default-features = false }
+tokio = { version = "1.52", default-features = false, features = [
+    "sync",
+    "rt",
+    "time",
+    "io-util",
+    "macros",
+    "rt-multi-thread",
+] }
+
+[dev-dependencies]
+clap = { version = "4.6", default-features = false, features = ["derive"] }
+criterion = { version = "0.8" } # Benchmarks
+dotenvy = "0.15"
+env_logger = "0.11"
+tokio = { version = "1.52", default-features = false, features = [
+    "rt-multi-thread",
+] }
+tun = { version = "0.8", default-features = false, features = ["async"] }
+udp-stream = { version = "0.0", default-features = false }
+
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+wintun = { version = "0.5", default-features = false }
+
+[build-dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level = 's'          # Optimize for size (with loop vectorization enabled).
+lto = true               # Enable Link Time Optimization
+codegen-units = 1        # Reduce number of codegen units to increase optimizations.
+panic = "abort"          # Abort on panic
+debug = false            # Strip debug symbols from the binary.
+rpath = false            # Do not embed the path to the dynamic library in the binary.
+debug-assertions = false # Remove assertions from the binary.
+incremental = false      # Disable incremental compilation.
+overflow-checks = false  # Disable overflow checks.
+strip = true             # Automatically strip symbols from the binary.
+
+# Optimize for performance *and* compilation time
+[profile.bench]
+# Inherits from `release` profile
+opt-level = 3
+lto = false
+codegen-units = 16
+debug = true       # Enable debug info for `perf(1)`
+incremental = true
+strip = "none"

@@ -4,7 +4,7 @@ members=["crates/wgcore", "crates/wsrelay", "crates/server", "crates/wgclient"]
 exclude=["crates/client-win/src-tauri"]
 
 [workspace.package]
-version="0.2.2"
+version="0.2.3"
 edition="2021"
 license="MIT"
 repository="https://github.com/Parham125/wg-wrapper"
@@ -32,3 +32,7 @@ rand_core={version="0.6", features=["getrandom"]}
 etherparse="0.20"
 wintun-bindings="0.7"
 
+
+# ipstack 1.0.1 never reports EOF after the peer FIN, so relays hang until the idle timeout. See vendor/ipstack ("wg-wrapper patch").
+[patch.crates-io]
+ipstack={path="vendor/ipstack"}

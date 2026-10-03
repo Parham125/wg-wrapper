@@ -113,6 +113,23 @@ async fn tcp_responder()->(SocketAddr, Arc<AtomicUsize>){
 	(addr, hits)
 }
 
+/// Sends the greeting, optionally half-closes, then waits for the client's FIN like a TLS server waiting for close_notify.
+/// The flag flips once that FIN has come through as EOF.
+async fn closing_responder(server_closes:bool)->(SocketAddr, Arc<std::sync::atomic::AtomicBool>){
+	let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+	let addr=listener.local_addr().unwrap();
+	let eof=Arc::new(std::sync::atomic::AtomicBool::new(false));
+	let flag=eof.clone();
+	tokio::spawn(async move{
+		let Ok((mut s, _))=listener.accept().await else{return};
+		let _=s.write_all(GREETING).await;
+		if server_closes{let _=s.shutdown().await;}
+		let mut sink=[0u8;256];
+		while let Ok(n)=s.read(&mut sink).await{if n==0{flag.store(true, Ordering::SeqCst); return}}
+	});
+	(addr, eof)
+}
+
 /// DNS over TCP: 2 byte big endian length, then the message.
 /// Echoes every datagram back with an `echo:` prefix.
 async fn udp_responder()->(SocketAddr, Arc<AtomicUsize>){
@@ -515,4 +532,49 @@ fn egress_never_dials_directly(){
 			assert!(line.contains("up.addr"), "{} dials {} without the proxy", path.display(), line.trim());
 		}
 	}
+}
+
+async fn close_reaches_upstream(server_closes:bool, sport:u16)->bool{
+	let (backend, eof)=closing_responder(server_closes).await;
+	let (echo, _)=udp_responder().await;
+	let (proxy, _)=socks5_proxy(dns_responder().await, backend, echo, false).await;
+	let wgw=spawn_server(&format!("socks5://{proxy}"), None).await;
+	let mut client=Client::connect(wgw.keys[0], wgw.public, wgw.addr).await;
+	let dst=[93, 184, 216, 34];
+	let isn=handshake(&mut client, dst, sport, 80).await;
+	let (mut got, mut fin, mut acked)=(0usize, false, false);
+	let deadline=Instant::now()+Duration::from_secs(5);
+	while got<GREETING.len()|| (server_closes && !fin){
+		let Some(left)=deadline.checked_duration_since(Instant::now()) else{break};
+		let Some(packet)=client.recv_ip(left).await else{break};
+		if let Some((tcp, payload))=parse_tcp(&packet){got+=payload.len(); fin|=tcp.fin}
+		// ipstack only sends its FIN once everything before it is acknowledged, as a real peer would have done.
+		if got==GREETING.len() && !acked{
+			let mut ack=TcpHeader::new(sport, 80, 1001, 65535);
+			ack.ack=true;
+			ack.acknowledgment_number=isn.wrapping_add(1+got as u32);
+			client.send_ip(&ip_tcp(PEER_A, dst, ack, &[])).await;
+			acked=true;
+		}
+	}
+	assert_eq!(got, GREETING.len(), "the greeting never arrived");
+	assert_eq!(fin, server_closes, "the upstream half-close did not reach the peer as a FIN");
+	let mut close=TcpHeader::new(sport, 80, 1001, 65535);
+	close.ack=true;
+	close.fin=true;
+	close.acknowledgment_number=isn.wrapping_add(1+got as u32+fin as u32);
+	client.send_ip(&ip_tcp(PEER_A, dst, close, &[])).await;
+	let deadline=Instant::now()+Duration::from_secs(3);
+	while Instant::now()<deadline && !eof.load(Ordering::SeqCst){
+		let _=client.recv_ip(Duration::from_millis(100)).await;
+	}
+	eof.load(Ordering::SeqCst)
+}
+
+/// A server that waits for the peer's close before tearing down (Sunshine's TLS shutdown does) must see it,
+/// whether the peer closes first or answers the server's own FIN.
+#[tokio::test(flavor="multi_thread", worker_threads=4)]
+async fn a_peer_fin_reaches_the_upstream_as_eof(){
+	assert!(close_reaches_upstream(false, 40030).await, "the peer closed first and the upstream never saw EOF");
+	assert!(close_reaches_upstream(true, 40031).await, "the peer answered the upstream FIN and the upstream never saw EOF");
 }
