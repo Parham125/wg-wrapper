@@ -1126,7 +1126,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "boringtun",
@@ -1543,7 +1543,7 @@ dependencies = [
 
 [[package]]
 name = "wgclient"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "etherparse",
@@ -1560,7 +1560,7 @@ dependencies = [
 
 [[package]]
 name = "wgcore"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1671,7 +1671,7 @@ dependencies = [
 
 [[package]]
 name = "wsrelay"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "clap",

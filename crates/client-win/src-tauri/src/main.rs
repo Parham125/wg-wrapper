@@ -5,6 +5,8 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_updater::UpdaterExt;
 use tracing::Level;
@@ -268,11 +270,20 @@ async fn set_settings(app:AppHandle, settings:Settings)->Result<(), String>{
 	Ok(())
 }
 
+/// Brings the window back from the tray.
+fn show(app:&AppHandle){
+	if let Some(w)=app.get_webview_window("main"){let _=w.show(); let _=w.unminimize(); let _=w.set_focus();}
+}
+
 fn main(){
 	let _=START.set(Instant::now());
 	tracing_subscriber::registry().with(LogLayer).init();
 	tauri::Builder::default()
+		// Has to be the first plugin: a second launch only raises the window of the one hiding in the tray.
+		.plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)))
 		.plugin(tauri_plugin_process::init())
+		// Closing the window keeps the tunnel up and leaves the app in the tray; Quit in the tray menu is the real exit.
+		.on_window_event(|w, e| if let tauri::WindowEvent::CloseRequested{api, ..}=e{api.prevent_close(); let _=w.hide();})
 		.manage(Shared{session:tokio::sync::Mutex::new(Session{state:"disconnected".to_string(), ..Default::default()})})
 		.invoke_handler(tauri::generate_handler![connect, disconnect, status, log_history, list_profiles, save_profile, delete_profile, check_update, install_update, get_settings, set_settings])
 		.setup(|app|{
@@ -286,6 +297,20 @@ fn main(){
 					if outer.height>m.work_area().size.height&&fit<inner.height{let _=w.set_size(tauri::PhysicalSize::new(inner.width, fit)); let _=w.center();}
 				}
 			}
+			let menu=Menu::with_items(app, &[&MenuItem::with_id(app, "open", "Open wg-wrapper", true, None::<&str>)?, &MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?])?;
+			let mut tray=TrayIconBuilder::with_id("main").tooltip("wg-wrapper").menu(&menu).show_menu_on_left_click(false)
+				.on_menu_event(|app, e| match e.id.as_ref(){
+					"open"=>show(app),
+					"quit"=>{
+						let app=app.clone();
+						// Tear the tunnel down first so routes and dns are restored before the process goes away.
+						tauri::async_runtime::spawn(async move{let _=disconnect(app.state::<Shared>()).await; app.exit(0);});
+					}
+					_=>{}
+				})
+				.on_tray_icon_event(|tray, e| if let TrayIconEvent::Click{button:MouseButton::Left, button_state:MouseButtonState::Up, ..}=e{show(tray.app_handle())});
+			if let Some(icon)=app.default_window_icon(){tray=tray.icon(icon.clone());}
+			tray.build(app)?;
 			#[cfg(desktop)]
 			app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
 			tracing::info!("client ready");
