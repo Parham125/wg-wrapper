@@ -406,9 +406,11 @@ pub mod win{
 		run("route", &[argv(&["add"]), host.clone(), argv(&["metric", "1"])].concat())?;
 		dev.undo.push([argv(&["route", "delete"]), host].concat());
 		for net in &cfg.allowed_ips{
-			// A default route is split in two halves so it outranks the real one without replacing it.
+			// A default route is split in two halves so it outranks the real one without replacing it. The plain
+			// 0.0.0.0/0 rides along because Windows only probes an adapter for internet (NCSI) when it holds a
+			// default route: without it the tray shows "No internet" and Microsoft apps act offline.
 			let parts:Vec<IpNet>=match net{
-				IpNet::V4(n) if n.prefix_len()==0=>vec!["0.0.0.0/1".parse()?, "128.0.0.0/1".parse()?],
+				IpNet::V4(n) if n.prefix_len()==0=>vec!["0.0.0.0/1".parse()?, "128.0.0.0/1".parse()?, *net],
 				other=>vec![*other],
 			};
 			for part in parts{
