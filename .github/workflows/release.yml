@@ -1,6 +1,8 @@
 name: release
+# Tag builds can only read caches saved on main, so main runs the same builds (without publishing) to keep them warm.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
 
 jobs:
@@ -34,8 +36,8 @@ jobs:
         with:
           projectPath: crates/client-win/src-tauri
           tauriScript: npx --yes @tauri-apps/cli@^2
-          tagName: ${{ github.ref_name }}
-          releaseName: ${{ github.ref_name }}
+          tagName: ${{ github.ref_type=='tag' && github.ref_name || '' }}
+          releaseName: ${{ github.ref_type=='tag' && github.ref_name || '' }}
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
 
@@ -74,11 +76,13 @@ jobs:
           mkdir -p dist
           cp "target/${{ matrix.target }}/release/${{ matrix.bin }}$ext" "dist/${{ matrix.bin }}-${{ matrix.target }}$ext"
       - uses: actions/upload-artifact@v4
+        if: github.ref_type=='tag'
         with:
           name: ${{ matrix.bin }}-${{ matrix.target }}
           path: dist/*
 
   publish:
+    if: github.ref_type=='tag'
     needs: build
     runs-on: ubuntu-latest
     permissions:
